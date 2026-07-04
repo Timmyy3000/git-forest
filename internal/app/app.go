@@ -258,16 +258,16 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 	if err != nil {
 		return MarkResult{}, err
 	}
-	if opts.Name == "" {
-		opts.Name, _ = inferCurrent(root)
-	}
-	if opts.Name == "" {
-		return MarkResult{}, fmt.Errorf("provide a worktree name when not inside a managed worktree")
-	}
 	err = state.WithLock(root, "forest mark", func() error {
 		store, err := state.Load(root)
 		if err != nil {
 			return err
+		}
+		if opts.Name == "" {
+			opts.Name, _ = inferCurrent(store, root)
+		}
+		if opts.Name == "" {
+			return fmt.Errorf("provide a worktree name when not inside a managed worktree")
 		}
 		wt, idx, ok := store.Find(opts.Name)
 		if !ok {
@@ -292,14 +292,14 @@ func (a *App) Path(ctx context.Context, name string, current bool) (string, erro
 	if err != nil {
 		return "", err
 	}
-	if current {
-		if name, err = inferCurrent(root); err != nil {
-			return "", err
-		}
-	}
 	store, err := state.Load(root)
 	if err != nil {
 		return "", err
+	}
+	if current {
+		if name, err = inferCurrent(store, root); err != nil {
+			return "", err
+		}
 	}
 	wt, _, ok := store.Find(name)
 	if !ok {
@@ -308,15 +308,21 @@ func (a *App) Path(ctx context.Context, name string, current bool) (string, erro
 	return filepath.Join(root, wt.Path), nil
 }
 
-func inferCurrent(root string) (string, error) {
+func inferCurrent(store state.Store, root string) (string, error) {
 	cwd, _ := os.Getwd()
-	rel, err := filepath.Rel(filepath.Join(root, config.WorktreeDir), cwd)
-	if err != nil || rel == "." || rel == "" || rel[0] == '.' {
-		return "", fmt.Errorf("not inside a managed worktree")
+	cwd, _ = filepath.Abs(cwd)
+	for _, wt := range store.Worktrees {
+		abs := filepath.Join(root, wt.Path)
+		rel, err := filepath.Rel(abs, cwd)
+		if err == nil && (rel == "." || (rel != "" && !isParentTraversal(rel))) {
+			return wt.ID, nil
+		}
 	}
-	parts := filepath.SplitList(rel)
-	_ = parts
-	return filepath.ToSlash(rel), nil
+	return "", fmt.Errorf("not inside a managed worktree")
+}
+
+func isParentTraversal(rel string) bool {
+	return rel == ".." || len(rel) > 3 && rel[:3] == ".."+string(filepath.Separator)
 }
 
 func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error) {
