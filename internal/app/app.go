@@ -296,7 +296,8 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		if err := state.Save(root, store); err != nil {
 			return err
 		}
-		return state.AppendEvent(root, state.Event{Time: now, Type: "marked", ID: wt.ID, Detail: opts.Phase})
+		_ = state.AppendEvent(root, state.Event{Time: now, Type: "marked", ID: wt.ID, Detail: opts.Phase})
+		return nil
 	})
 	return MarkResult{Name: opts.Name, Phase: opts.Phase}, err
 }
@@ -328,6 +329,8 @@ func inferCurrent(store state.Store, root string) (string, error) {
 		return "", err
 	}
 	var firstResolveErr error
+	var bestID string
+	bestDepth := -1
 	for _, wt := range store.Worktrees {
 		if wt.Path == "" || wt.Path == "." || !filepath.IsLocal(wt.Path) {
 			continue
@@ -341,8 +344,15 @@ func inferCurrent(store state.Store, root string) (string, error) {
 			continue
 		}
 		if contains {
-			return wt.ID, nil
+			depth := len(filepath.Clean(wt.Path))
+			if depth > bestDepth {
+				bestID = wt.ID
+				bestDepth = depth
+			}
 		}
+	}
+	if bestID != "" {
+		return bestID, nil
 	}
 	if firstResolveErr != nil {
 		return "", fmt.Errorf("cannot resolve managed worktree paths: %w", firstResolveErr)

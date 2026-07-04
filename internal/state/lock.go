@@ -50,16 +50,17 @@ func InspectLock(root string) (LockStatus, error) {
 		return LockStatus{Exists: true, Stale: true, Reason: "missing process id", Lock: lock}, nil
 	}
 	host, hostErr := os.Hostname()
-	if hostErr != nil {
-		return LockStatus{Exists: true, Reason: "cannot determine local host: " + hostErr.Error(), Lock: lock}, nil
-	}
 	if lock.Hostname != "" && host != "" && !strings.EqualFold(lock.Hostname, host) {
 		return LockStatus{Exists: true, Reason: "held by another host", Lock: lock}, nil
 	}
-	if !processRunning(lock.PID) {
-		return LockStatus{Exists: true, Stale: true, Reason: fmt.Sprintf("process %d is not running", lock.PID), Lock: lock}, nil
+	reasonPrefix := ""
+	if hostErr != nil {
+		reasonPrefix = "cannot determine local host: " + hostErr.Error() + "; "
 	}
-	return LockStatus{Exists: true, Reason: fmt.Sprintf("held by process %d", lock.PID), Lock: lock}, nil
+	if !processRunning(lock.PID) {
+		return LockStatus{Exists: true, Stale: true, Reason: fmt.Sprintf("%sprocess %d is not running", reasonPrefix, lock.PID), Lock: lock}, nil
+	}
+	return LockStatus{Exists: true, Reason: fmt.Sprintf("%sheld by process %d", reasonPrefix, lock.PID), Lock: lock}, nil
 }
 
 func acquire(root, command string) (func(), error) {

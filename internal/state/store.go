@@ -60,6 +60,10 @@ func Save(root string, store Store) error {
 		_ = file.Close()
 		return err
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
 	if err := file.Close(); err != nil {
 		return err
 	}
