@@ -1,0 +1,73 @@
+package state
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+
+	"github.com/oluwatimilehin/git-forest/internal/config"
+)
+
+func Path(root string) string {
+	return filepath.Join(root, config.StateDir, "worktrees.json")
+}
+
+func Load(root string) (Store, error) {
+	path := Path(root)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return NewStore(root), nil
+	}
+	if err != nil {
+		return Store{}, err
+	}
+	if len(data) == 0 {
+		return NewStore(root), nil
+	}
+	var store Store
+	if err := json.Unmarshal(data, &store); err != nil {
+		return Store{}, err
+	}
+	if store.Version == 0 {
+		store.Version = 1
+	}
+	if store.RepoRoot == "" {
+		store.RepoRoot = root
+	}
+	if store.Worktrees == nil {
+		store.Worktrees = []Worktree{}
+	}
+	return store, nil
+}
+
+func Save(root string, store Store) error {
+	if err := os.MkdirAll(filepath.Join(root, config.StateDir), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(Path(root), append(data, '\n'), 0o644)
+}
+
+func AppendEvent(root string, event Event) error {
+	if event.Type == "" {
+		return errors.New("event type is required")
+	}
+	if err := os.MkdirAll(filepath.Join(root, config.StateDir), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(filepath.Join(root, config.StateDir, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(append(data, '\n'))
+	return err
+}
