@@ -20,9 +20,15 @@ func newInitCommand(application *app.App) *cobra.Command {
 			}
 			if quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), result.ForestDir)
+				for _, warning := range result.Warnings {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning)
+				}
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Forest initialized at %s\n", result.ForestDir)
+			for _, warning := range result.Warnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warning)
+			}
 			return nil
 		},
 	}

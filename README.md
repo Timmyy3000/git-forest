@@ -45,6 +45,7 @@ repo/
 - Infers the current managed worktree from any subdirectory
 - Detects merged and patch-equivalent branches
 - Removes merged or selected worktrees with `forest close`
+- Configures VS Code search and file watcher ignores so `.forest/worktrees` stays visible without being indexed
 - Repairs common state and lock issues with `forest doctor --fix`
 
 ## Install
@@ -90,6 +91,21 @@ forest add -b feat/login-copy
 ```
 
 This uses `feat/login-copy` as both the branch and worktree identity.
+
+Forest keeps worktrees visible in VS Code, Cursor, and other VS Code forks, but `forest init` adds workspace settings that exclude `.forest/worktrees` from search and file watching:
+
+```json
+{
+  "files.watcherExclude": {
+    "**/.forest/worktrees/**": true
+  },
+  "search.exclude": {
+    "**/.forest/worktrees/**": true
+  }
+}
+```
+
+If `.vscode/settings.json` uses JSONC comments, Forest refuses to rewrite it and prints a warning instead of stripping comments. Use `forest doctor --fix` after converting that file to plain JSON or adding the settings manually.
 
 See what is active:
 

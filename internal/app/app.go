@@ -19,7 +19,10 @@ type App struct{}
 
 func New() *App { return &App{} }
 
-type InitResult struct{ ForestDir string }
+type InitResult struct {
+	ForestDir string
+	Warnings  []string
+}
 
 type AddOptions struct {
 	Name   string
@@ -118,7 +121,11 @@ func (a *App) Init(ctx context.Context) (InitResult, error) {
 	if err := state.Save(root, store); err != nil {
 		return InitResult{}, err
 	}
-	return InitResult{ForestDir: filepath.Join(root, config.ForestDir)}, nil
+	result := InitResult{ForestDir: filepath.Join(root, config.ForestDir)}
+	if _, err := config.EnsureVSCodeIgnores(root); err != nil {
+		result.Warnings = append(result.Warnings, "could not update VS Code ignores: "+err.Error())
+	}
+	return result, nil
 }
 
 func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
@@ -427,6 +434,25 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		checks = append(checks, Check{Name: ".forest", Status: "created"})
 	} else {
 		checks = append(checks, Check{Name: ".forest", Status: "missing"})
+	}
+	if fix {
+		changed, err := config.EnsureVSCodeIgnores(root)
+		if err != nil {
+			checks = append(checks, Check{Name: "VS Code ignores", Status: "invalid: " + err.Error()})
+		} else if changed {
+			checks = append(checks, Check{Name: "VS Code ignores", Status: "updated"})
+		} else {
+			checks = append(checks, Check{Name: "VS Code ignores", Status: "ok"})
+		}
+	} else {
+		ok, err := config.HasVSCodeIgnores(root)
+		if err != nil {
+			checks = append(checks, Check{Name: "VS Code ignores", Status: "invalid: " + err.Error()})
+		} else if ok {
+			checks = append(checks, Check{Name: "VS Code ignores", Status: "ok"})
+		} else {
+			checks = append(checks, Check{Name: "VS Code ignores", Status: "missing"})
+		}
 	}
 	canMutate := true
 	lockStatus, err := state.InspectLock(root)
