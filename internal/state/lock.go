@@ -108,7 +108,7 @@ func processRunning(pid int) bool {
 	if runtime.GOOS == "windows" {
 		out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/FO", "CSV", "/NH").Output()
 		if err != nil {
-			return true
+			return false
 		}
 		return strings.Contains(string(out), strconv.Itoa(pid))
 	}

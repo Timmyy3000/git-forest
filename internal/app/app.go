@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/oluwatimilehin/git-forest/internal/config"
@@ -480,6 +482,10 @@ func validStatePath(path string) bool {
 	}
 	clean := filepath.Clean(path)
 	worktreeRoot := filepath.Clean(config.WorktreeDir)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		clean = strings.ToLower(clean)
+		worktreeRoot = strings.ToLower(worktreeRoot)
+	}
 	rel, err := filepath.Rel(worktreeRoot, clean)
 	return err == nil && filepath.IsLocal(rel)
 }
