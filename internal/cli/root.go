@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Timmyy3000/git-forest/internal/app"
+	"github.com/Timmyy3000/git-forest/internal/buildinfo"
 )
 
 func Execute() error {
@@ -16,10 +17,12 @@ func Execute() error {
 
 func newRootCommand(application *app.App) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "forest",
-		Short: "Manage repo-local Git worktrees for parallel agent work",
-		Long:  "Forest keeps parallel worktrees visible under .forest/worktrees and tracks agent activity in .forest/state.",
+		Use:     "forest",
+		Short:   "Manage repo-local Git worktrees for parallel agent work",
+		Long:    "Forest keeps parallel worktrees visible under .forest/worktrees and tracks agent activity in .forest/state.",
+		Version: buildinfo.Version,
 	}
+	root.SetVersionTemplate("forest {{.Version}}\n")
 
 	root.AddCommand(newInitCommand(application))
 	root.AddCommand(newAddCommand(application))
@@ -29,6 +32,7 @@ func newRootCommand(application *app.App) *cobra.Command {
 	root.AddCommand(newPathCommand(application))
 	root.AddCommand(newCloseCommand(application))
 	root.AddCommand(newDoctorCommand(application))
+	root.AddCommand(newVersionCommand())
 
 	root.SetErr(os.Stderr)
 	root.SetOut(os.Stdout)

@@ -50,6 +50,20 @@ repo/
 
 ## Install
 
+Install the latest prebuilt binary:
+
+```bash
+curl -fsSL https://forest.timi.click/install.sh | sh
+```
+
+Install a pinned version:
+
+```bash
+curl -fsSL https://forest.timi.click/install.sh | FOREST_VERSION=v0.1.0 sh
+```
+
+The installer downloads the matching GitHub release asset for your OS and architecture, verifies `checksums.txt` when `sha256sum` or `shasum` is available, and installs `forest` into `/usr/local/bin` or `~/.local/bin`. Set `FOREST_INSTALL_DIR` to choose a different directory.
+
 From source:
 
 ```bash
@@ -181,6 +195,15 @@ go test ./...
 go vet ./...
 go build ./cmd/forest
 ```
+
+Release artifacts are published when a `v*` tag is pushed:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow builds Linux, macOS, and Windows binaries for `amd64` and `arm64`, uploads archives, and publishes `checksums.txt`.
 
 Formatting:
 

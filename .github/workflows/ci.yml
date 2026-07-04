@@ -37,6 +37,10 @@ jobs:
             exit 1
           fi
 
+      - name: Check installer shell syntax
+        shell: bash
+        run: bash -n install.sh
+
       - name: Vet
         run: go vet ./...
 
