@@ -258,16 +258,20 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 	if err != nil {
 		return MarkResult{}, err
 	}
+	if opts.Name == "" {
+		store, err := state.Load(root)
+		if err != nil {
+			return MarkResult{}, err
+		}
+		opts.Name, err = inferCurrent(store, root)
+		if err != nil {
+			return MarkResult{}, fmt.Errorf("provide a worktree name when not inside a managed worktree: %w", err)
+		}
+	}
 	err = state.WithLock(root, "forest mark", func() error {
 		store, err := state.Load(root)
 		if err != nil {
 			return err
-		}
-		if opts.Name == "" {
-			opts.Name, _ = inferCurrent(store, root)
-		}
-		if opts.Name == "" {
-			return fmt.Errorf("provide a worktree name when not inside a managed worktree")
 		}
 		wt, idx, ok := store.Find(opts.Name)
 		if !ok {
@@ -275,8 +279,12 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		}
 		now := time.Now().UTC()
 		wt.Activity.Phase = opts.Phase
-		wt.Activity.Agent = opts.Agent
-		wt.Activity.Note = opts.Note
+		if opts.Agent != "" {
+			wt.Activity.Agent = opts.Agent
+		}
+		if opts.Note != "" {
+			wt.Activity.Note = opts.Note
+		}
 		wt.Activity.LastSeenAt = now
 		store.Worktrees[idx] = wt
 		if err := state.Save(root, store); err != nil {
@@ -309,20 +317,21 @@ func (a *App) Path(ctx context.Context, name string, current bool) (string, erro
 }
 
 func inferCurrent(store state.Store, root string) (string, error) {
-	cwd, _ := os.Getwd()
-	cwd, _ = filepath.Abs(cwd)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
 	for _, wt := range store.Worktrees {
+		if wt.Path == "" || wt.Path == "." {
+			continue
+		}
 		abs := filepath.Join(root, wt.Path)
-		rel, err := filepath.Rel(abs, cwd)
-		if err == nil && (rel == "." || (rel != "" && !isParentTraversal(rel))) {
+		contains, err := pathutil.Contains(abs, cwd)
+		if err == nil && contains {
 			return wt.ID, nil
 		}
 	}
 	return "", fmt.Errorf("not inside a managed worktree")
-}
-
-func isParentTraversal(rel string) bool {
-	return rel == ".." || len(rel) > 3 && rel[:3] == ".."+string(filepath.Separator)
 }
 
 func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error) {

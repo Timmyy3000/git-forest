@@ -51,3 +51,20 @@ func TestCheckCollisionRejectsExactAndPrefixCollisions(t *testing.T) {
 		}
 	}
 }
+
+func TestContains(t *testing.T) {
+	ok, err := Contains("repo/worktrees/fix-login", "repo/worktrees/fix-login/sub/dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected child path to be contained")
+	}
+	ok, err = Contains("repo/worktrees/fix-login", "repo/worktrees/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected sibling path not to be contained")
+	}
+}
