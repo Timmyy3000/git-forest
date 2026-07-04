@@ -1,0 +1,83 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME}"
+          commit="$(git rev-parse --short HEAD)"
+          date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-s -w -X github.com/Timmyy3000/git-forest/internal/buildinfo.Version=${version} -X github.com/Timmyy3000/git-forest/internal/buildinfo.Commit=${commit} -X github.com/Timmyy3000/git-forest/internal/buildinfo.Date=${date}"
+
+          mkdir -p dist
+
+          build_unix() {
+            local goos="$1"
+            local goarch="$2"
+            local name="forest_${goos}_${goarch}"
+            local work="dist/${name}"
+            mkdir -p "${work}"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${work}/forest" ./cmd/forest
+            cp README.md LICENSE "${work}/"
+            tar -C "${work}" -czf "dist/${name}.tar.gz" forest README.md LICENSE
+          }
+
+          build_windows() {
+            local goarch="$1"
+            local name="forest_windows_${goarch}"
+            local work="dist/${name}"
+            mkdir -p "${work}"
+            CGO_ENABLED=0 GOOS=windows GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${work}/forest.exe" ./cmd/forest
+            cp README.md LICENSE "${work}/"
+            (cd "${work}" && python3 -m zipfile -c "../${name}.zip" forest.exe README.md LICENSE)
+          }
+
+          build_unix linux amd64
+          build_unix linux arm64
+          build_unix darwin amd64
+          build_unix darwin arm64
+          build_windows amd64
+          build_windows arm64
+
+          (cd dist && sha256sum forest_*.tar.gz forest_*.zip > checksums.txt)
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/forest_*.tar.gz
+            dist/forest_*.zip
+            dist/checksums.txt
