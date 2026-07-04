@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oluwatimilehin/git-forest/internal/config"
-	"github.com/oluwatimilehin/git-forest/internal/pathutil"
+	"github.com/Timmyy3000/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/pathutil"
 )
 
 func TestValidStatePathAcceptsGeneratedWorktreePaths(t *testing.T) {

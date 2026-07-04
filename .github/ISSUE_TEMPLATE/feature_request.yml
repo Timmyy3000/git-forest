@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an improvement for Forest
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Forest do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: agent-context
+    attributes:
+      label: Agent workflow context
+      description: If this affects agents, describe how they should use it.

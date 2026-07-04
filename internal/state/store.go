@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/oluwatimilehin/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/config"
 )
 
 func Path(root string) string {

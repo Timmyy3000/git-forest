@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/oluwatimilehin/git-forest/internal/app"
+	"github.com/Timmyy3000/git-forest/internal/app"
 )
 
 var (

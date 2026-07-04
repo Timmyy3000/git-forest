@@ -1,4 +1,4 @@
-module github.com/oluwatimilehin/git-forest
+module github.com/Timmyy3000/git-forest
 
 go 1.25
 

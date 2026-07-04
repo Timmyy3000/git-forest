@@ -3,8 +3,8 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/oluwatimilehin/git-forest/internal/app"
-	"github.com/oluwatimilehin/git-forest/internal/output"
+	"github.com/Timmyy3000/git-forest/internal/app"
+	"github.com/Timmyy3000/git-forest/internal/output"
 )
 
 func newListCommand(application *app.App) *cobra.Command {

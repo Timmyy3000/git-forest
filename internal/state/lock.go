@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oluwatimilehin/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/config"
 )
 
 type Lock struct {

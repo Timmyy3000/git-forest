@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/oluwatimilehin/git-forest/internal/cli"
+	"github.com/Timmyy3000/git-forest/internal/cli"
 )
 
 func main() {
