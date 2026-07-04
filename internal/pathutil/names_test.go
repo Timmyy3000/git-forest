@@ -119,6 +119,13 @@ func TestContainsResolvesSymlinks(t *testing.T) {
 	if !ok {
 		t.Fatal("expected symlinked child to be contained in real parent")
 	}
+	ok, err = Contains(link, filepath.Join(target, "sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected real child to be contained in symlinked parent")
+	}
 }
 
 func TestContainsRejectsParentTraversal(t *testing.T) {

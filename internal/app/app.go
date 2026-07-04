@@ -327,15 +327,25 @@ func inferCurrent(store state.Store, root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var firstResolveErr error
 	for _, wt := range store.Worktrees {
 		if wt.Path == "" || wt.Path == "." || !filepath.IsLocal(wt.Path) {
 			continue
 		}
 		abs := filepath.Join(root, wt.Path)
 		contains, err := pathutil.Contains(abs, cwd)
-		if err == nil && contains {
+		if err != nil {
+			if firstResolveErr == nil {
+				firstResolveErr = fmt.Errorf("%s: %w", wt.ID, err)
+			}
+			continue
+		}
+		if contains {
 			return wt.ID, nil
 		}
+	}
+	if firstResolveErr != nil {
+		return "", fmt.Errorf("cannot resolve managed worktree paths: %w", firstResolveErr)
 	}
 	return "", fmt.Errorf("not inside a managed worktree")
 }

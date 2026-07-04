@@ -3,10 +3,11 @@
 package state
 
 import (
+	"bytes"
+	"encoding/csv"
 	"fmt"
 	"os/exec"
 	"strconv"
-	"strings"
 )
 
 func processRunning(pid int) bool {
@@ -17,5 +18,17 @@ func processRunning(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(out), strconv.Itoa(pid))
+	reader := csv.NewReader(bytes.NewReader(out))
+	reader.FieldsPerRecord = -1
+	records, err := reader.ReadAll()
+	if err != nil {
+		return false
+	}
+	expected := strconv.Itoa(pid)
+	for _, record := range records {
+		if len(record) >= 2 && record[1] == expected {
+			return true
+		}
+	}
+	return false
 }
