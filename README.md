@@ -47,6 +47,7 @@ repo/
 - Removes merged or selected worktrees with `forest close`
 - Configures VS Code search and file watcher ignores so `.forest/worktrees` stays visible without being indexed
 - Repairs common state and lock issues with `forest doctor --fix`
+- Includes embedded coding-agent instructions with a link to `https://forest.timi.click/agents.md`
 
 ## Install
 
@@ -156,6 +157,7 @@ forest close --merged --yes
 | `forest close --merged --yes` | Remove safely integrated worktrees |
 | `forest doctor` | Diagnose Forest state |
 | `forest doctor --fix` | Repair fixable state and stale-lock issues |
+| `forest agents` | Print embedded Forest instructions for coding agents |
 
 ## Copying Reusable Setup Files
 
@@ -169,6 +171,18 @@ copy = [".env", ".env.local", ".claude", ".cursor", ".agent", "skills"]
 This is intended for agent workflows where every worktree needs the same repo standards, skills, or local environment files.
 
 ## Agent Workflow
+
+Coding agents can discover the Forest workflow with:
+
+```bash
+forest agents
+```
+
+This works without web access. To print only the canonical online guide URL:
+
+```bash
+forest agents --url
+```
 
 A typical agent flow:
 

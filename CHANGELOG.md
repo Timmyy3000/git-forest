@@ -16,3 +16,4 @@ All notable changes to Forest will be documented here.
 - GitHub release workflow for prebuilt Linux, macOS, and Windows binaries.
 - Shell installer for downloading release assets without requiring Go.
 - `forest version` command with release build metadata.
+- `forest agents` command with embedded coding-agent instructions and `--url` for the online guide.
