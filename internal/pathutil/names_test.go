@@ -58,14 +58,23 @@ func TestCheckCollisionRejectsExactAndPrefixCollisions(t *testing.T) {
 }
 
 func TestContains(t *testing.T) {
-	ok, err := Contains("repo/worktrees/fix-login", "repo/worktrees/fix-login/sub/dir")
+	root := t.TempDir()
+	parent := filepath.Join(root, "worktrees", "fix-login")
+	child := filepath.Join(parent, "sub", "dir")
+	sibling := filepath.Join(root, "worktrees", "other")
+	for _, dir := range []string{child, sibling} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ok, err := Contains(parent, child)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok {
 		t.Fatal("expected child path to be contained")
 	}
-	ok, err = Contains("repo/worktrees/fix-login", "repo/worktrees/other")
+	ok, err = Contains(parent, sibling)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +87,13 @@ func TestContainsFoldsCaseOnCaseInsensitivePlatforms(t *testing.T) {
 	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		t.Skip("case folding applies to windows and darwin only")
 	}
-	ok, err := Contains("repo/worktrees/Fix-Login", "repo/worktrees/fix-login/sub")
+	root := t.TempDir()
+	parent := filepath.Join(root, "Fix-Login")
+	child := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := Contains(filepath.Join(root, "fix-login"), child)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +118,24 @@ func TestContainsResolvesSymlinks(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("expected symlinked child to be contained in real parent")
+	}
+}
+
+func TestContainsRejectsParentTraversal(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "worktrees", "fix-login")
+	escape := filepath.Join(root, "worktrees", "escape")
+	for _, dir := range []string{parent, escape} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	traversal := filepath.Join(parent, "..", "escape")
+	ok, err := Contains(parent, traversal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected traversal path outside parent to be rejected")
 	}
 }

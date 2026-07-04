@@ -52,10 +52,10 @@ func canonicalPath(path string) (string, error) {
 		return "", err
 	}
 	evaluated, err := filepath.EvalSymlinks(cleaned)
-	if err == nil {
-		return filepath.Clean(evaluated), nil
+	if err != nil {
+		return "", err
 	}
-	return cleaned, nil
+	return filepath.Clean(evaluated), nil
 }
 
 func collisionKey(path string) string {

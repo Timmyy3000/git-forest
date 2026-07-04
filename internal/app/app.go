@@ -326,7 +326,7 @@ func inferCurrent(store state.Store, root string) (string, error) {
 		return "", err
 	}
 	for _, wt := range store.Worktrees {
-		if wt.Path == "" || wt.Path == "." {
+		if wt.Path == "" || wt.Path == "." || !filepath.IsLocal(wt.Path) {
 			continue
 		}
 		abs := filepath.Join(root, wt.Path)
@@ -406,15 +406,50 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	} else {
 		checks = append(checks, Check{Name: ".forest", Status: "missing"})
 	}
-	if store, err := state.Load(root); err != nil {
-		checks = append(checks, Check{Name: "state file", Status: "invalid: " + err.Error()})
-	} else {
-		checks = append(checks, Check{Name: "state file", Status: "ok"})
-		for _, wt := range store.Worktrees {
-			if wt.Path == "" || wt.Path == "." || !filepath.IsLocal(wt.Path) {
-				checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
-			}
+	validateState := func() error {
+		store, err := state.Load(root)
+		if err != nil {
+			checks = append(checks, Check{Name: "state file", Status: "invalid: " + err.Error()})
+			return nil
 		}
+		checks = append(checks, Check{Name: "state file", Status: "ok"})
+		var kept []state.Worktree
+		removed := 0
+		for _, wt := range store.Worktrees {
+			if validStatePath(wt.Path) {
+				kept = append(kept, wt)
+				continue
+			}
+			removed++
+			checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
+		}
+		if fix && removed > 0 {
+			store.Worktrees = kept
+			if err := state.Save(root, store); err != nil {
+				return err
+			}
+			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d invalid record(s)", removed)})
+		} else if removed == 0 {
+			checks = append(checks, Check{Name: "state paths", Status: "ok"})
+		}
+		return nil
+	}
+	if fix {
+		if err := state.WithLock(root, "forest doctor --fix", validateState); err != nil {
+			return DoctorResult{}, err
+		}
+	} else if err := validateState(); err != nil {
+		return DoctorResult{}, err
 	}
 	return DoctorResult{Checks: checks}, nil
+}
+
+func validStatePath(path string) bool {
+	if path == "" || path == "." || !filepath.IsLocal(path) {
+		return false
+	}
+	clean := filepath.Clean(path)
+	worktreeRoot := filepath.Clean(config.WorktreeDir)
+	rel, err := filepath.Rel(worktreeRoot, clean)
+	return err == nil && filepath.IsLocal(rel)
 }
