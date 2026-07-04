@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/oluwatimilehin/git-forest/internal/app"
+	"github.com/Timmyy3000/git-forest/internal/app"
 )
 
 func Execute() error {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oluwatimilehin/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/config"
 )
 
 func TestInspectLockReportsMissing(t *testing.T) {
