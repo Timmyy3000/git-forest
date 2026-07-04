@@ -63,6 +63,9 @@ func Save(root string, store Store) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return err
+	}
 	return atomicReplace(tmp, Path(root))
 }
 

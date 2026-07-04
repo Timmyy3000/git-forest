@@ -4,10 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +49,10 @@ func InspectLock(root string) (LockStatus, error) {
 	if lock.PID <= 0 {
 		return LockStatus{Exists: true, Stale: true, Reason: "missing process id", Lock: lock}, nil
 	}
-	host, _ := os.Hostname()
+	host, hostErr := os.Hostname()
+	if hostErr != nil {
+		return LockStatus{Exists: true, Reason: "cannot determine local host: " + hostErr.Error(), Lock: lock}, nil
+	}
 	if lock.Hostname != "" && host != "" && !strings.EqualFold(lock.Hostname, host) {
 		return LockStatus{Exists: true, Reason: "held by another host", Lock: lock}, nil
 	}
@@ -99,21 +99,4 @@ func ClearLock(root string) error {
 
 func lockPath(root string) string {
 	return filepath.Join(root, config.StateDir, "lock")
-}
-
-func processRunning(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/FO", "CSV", "/NH").Output()
-		if err != nil {
-			return false
-		}
-		return strings.Contains(string(out), strconv.Itoa(pid))
-	}
-	if err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run(); err != nil {
-		return false
-	}
-	return true
 }

@@ -486,6 +486,9 @@ func validStatePath(path string) bool {
 		clean = strings.ToLower(clean)
 		worktreeRoot = strings.ToLower(worktreeRoot)
 	}
+	if clean == worktreeRoot {
+		return false
+	}
 	rel, err := filepath.Rel(worktreeRoot, clean)
 	return err == nil && filepath.IsLocal(rel)
 }

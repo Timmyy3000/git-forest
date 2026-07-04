@@ -34,7 +34,7 @@ func TestValidStatePathAcceptsGeneratedWorktreePaths(t *testing.T) {
 }
 
 func TestValidStatePathRejectsUnsafePaths(t *testing.T) {
-	for _, path := range []string{"", ".", "../escape", filepath.Join(".forest", "other", "fix-login"), filepath.Join(config.WorktreeDir, "..", "escape")} {
+	for _, path := range []string{"", ".", "../escape", config.WorktreeDir, filepath.Join(".forest", "other", "fix-login"), filepath.Join(config.WorktreeDir, "..", "escape")} {
 		if validStatePath(path) {
 			t.Fatalf("expected %s to be invalid", path)
 		}
