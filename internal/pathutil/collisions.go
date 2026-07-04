@@ -26,6 +26,38 @@ func CheckCollision(candidate string, existing []string) error {
 	return nil
 }
 
+func Contains(parent, child string) (bool, error) {
+	parent, err := canonicalPath(parent)
+	if err != nil {
+		return false, err
+	}
+	child, err = canonicalPath(child)
+	if err != nil {
+		return false, err
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		parent = strings.ToLower(parent)
+		child = strings.ToLower(child)
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false, err
+	}
+	return filepath.IsLocal(rel), nil
+}
+
+func canonicalPath(path string) (string, error) {
+	cleaned, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	evaluated, err := filepath.EvalSymlinks(cleaned)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(evaluated), nil
+}
+
 func collisionKey(path string) string {
 	path = filepath.Clean(path)
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {

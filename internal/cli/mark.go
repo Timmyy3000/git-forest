@@ -26,6 +26,8 @@ func newMarkCommand(application *app.App) *cobra.Command {
 			if len(args) == 1 {
 				opts.Name = args[0]
 			}
+			opts.AgentSet = cmd.Flags().Changed("agent")
+			opts.NoteSet = cmd.Flags().Changed("note")
 			result, err := application.Mark(cmd.Context(), opts)
 			if err != nil {
 				return err
@@ -35,7 +37,7 @@ func newMarkCommand(application *app.App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Phase, "phase", "", "activity phase")
-	cmd.Flags().StringVar(&opts.Agent, "agent", "", "agent name")
-	cmd.Flags().StringVar(&opts.Note, "note", "", "activity note")
+	cmd.Flags().StringVar(&opts.Agent, "agent", "", "agent name (pass an empty string to clear)")
+	cmd.Flags().StringVar(&opts.Note, "note", "", "activity note (pass an empty string to clear)")
 	return cmd
 }

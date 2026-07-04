@@ -1,6 +1,11 @@
 package pathutil
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
 
 func TestFromNameUsesForestBranch(t *testing.T) {
 	mapping, err := FromName(".forest/worktrees", "fix-login")
@@ -49,5 +54,95 @@ func TestCheckCollisionRejectsExactAndPrefixCollisions(t *testing.T) {
 		if err := CheckCollision(candidate, existing); err == nil {
 			t.Fatalf("expected collision for %s", candidate)
 		}
+	}
+}
+
+func TestContains(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "worktrees", "fix-login")
+	child := filepath.Join(parent, "sub", "dir")
+	sibling := filepath.Join(root, "worktrees", "other")
+	for _, dir := range []string{child, sibling} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ok, err := Contains(parent, child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected child path to be contained")
+	}
+	ok, err = Contains(parent, sibling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected sibling path not to be contained")
+	}
+}
+
+func TestContainsFoldsCaseOnCaseInsensitivePlatforms(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case folding applies to windows and darwin only")
+	}
+	root := t.TempDir()
+	parent := filepath.Join(root, "Fix-Login")
+	child := filepath.Join(parent, "sub")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := Contains(filepath.Join(root, "fix-login"), child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected differently cased child to be contained")
+	}
+}
+
+func TestContainsResolvesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real")
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "alias")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	ok, err := Contains(target, filepath.Join(link, "sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected symlinked child to be contained in real parent")
+	}
+	ok, err = Contains(link, filepath.Join(target, "sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected real child to be contained in symlinked parent")
+	}
+}
+
+func TestContainsRejectsParentTraversal(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "worktrees", "fix-login")
+	escape := filepath.Join(root, "worktrees", "escape")
+	for _, dir := range []string{parent, escape} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	traversal := filepath.Join(parent, "..", "escape")
+	ok, err := Contains(parent, traversal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected traversal path outside parent to be rejected")
 	}
 }

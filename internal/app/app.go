@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/oluwatimilehin/git-forest/internal/config"
@@ -64,6 +66,10 @@ type MarkOptions struct {
 	Phase string
 	Agent string
 	Note  string
+	// AgentSet/NoteSet distinguish an explicitly passed empty value
+	// (clear the field) from an omitted flag (keep the stored value).
+	AgentSet bool
+	NoteSet  bool
 }
 
 type MarkResult struct {
@@ -259,10 +265,14 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		return MarkResult{}, err
 	}
 	if opts.Name == "" {
-		opts.Name, _ = inferCurrent(root)
-	}
-	if opts.Name == "" {
-		return MarkResult{}, fmt.Errorf("provide a worktree name when not inside a managed worktree")
+		store, err := state.Load(root)
+		if err != nil {
+			return MarkResult{}, err
+		}
+		opts.Name, err = inferCurrent(store, root)
+		if err != nil {
+			return MarkResult{}, fmt.Errorf("cannot infer current worktree: %w", err)
+		}
 	}
 	err = state.WithLock(root, "forest mark", func() error {
 		store, err := state.Load(root)
@@ -275,14 +285,19 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		}
 		now := time.Now().UTC()
 		wt.Activity.Phase = opts.Phase
-		wt.Activity.Agent = opts.Agent
-		wt.Activity.Note = opts.Note
+		if opts.AgentSet {
+			wt.Activity.Agent = opts.Agent
+		}
+		if opts.NoteSet {
+			wt.Activity.Note = opts.Note
+		}
 		wt.Activity.LastSeenAt = now
 		store.Worktrees[idx] = wt
 		if err := state.Save(root, store); err != nil {
 			return err
 		}
-		return state.AppendEvent(root, state.Event{Time: now, Type: "marked", ID: wt.ID, Detail: opts.Phase})
+		_ = state.AppendEvent(root, state.Event{Time: now, Type: "marked", ID: wt.ID, Detail: opts.Phase})
+		return nil
 	})
 	return MarkResult{Name: opts.Name, Phase: opts.Phase}, err
 }
@@ -292,14 +307,14 @@ func (a *App) Path(ctx context.Context, name string, current bool) (string, erro
 	if err != nil {
 		return "", err
 	}
-	if current {
-		if name, err = inferCurrent(root); err != nil {
-			return "", err
-		}
-	}
 	store, err := state.Load(root)
 	if err != nil {
 		return "", err
+	}
+	if current {
+		if name, err = inferCurrent(store, root); err != nil {
+			return "", err
+		}
 	}
 	wt, _, ok := store.Find(name)
 	if !ok {
@@ -308,15 +323,41 @@ func (a *App) Path(ctx context.Context, name string, current bool) (string, erro
 	return filepath.Join(root, wt.Path), nil
 }
 
-func inferCurrent(root string) (string, error) {
-	cwd, _ := os.Getwd()
-	rel, err := filepath.Rel(filepath.Join(root, config.WorktreeDir), cwd)
-	if err != nil || rel == "." || rel == "" || rel[0] == '.' {
-		return "", fmt.Errorf("not inside a managed worktree")
+func inferCurrent(store state.Store, root string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
 	}
-	parts := filepath.SplitList(rel)
-	_ = parts
-	return filepath.ToSlash(rel), nil
+	var firstResolveErr error
+	var bestID string
+	bestDepth := -1
+	for _, wt := range store.Worktrees {
+		if wt.Path == "" || wt.Path == "." || !filepath.IsLocal(wt.Path) {
+			continue
+		}
+		abs := filepath.Join(root, wt.Path)
+		contains, err := pathutil.Contains(abs, cwd)
+		if err != nil {
+			if firstResolveErr == nil {
+				firstResolveErr = fmt.Errorf("%s: %w", wt.ID, err)
+			}
+			continue
+		}
+		if contains {
+			depth := len(filepath.Clean(wt.Path))
+			if depth > bestDepth {
+				bestID = wt.ID
+				bestDepth = depth
+			}
+		}
+	}
+	if bestID != "" {
+		return bestID, nil
+	}
+	if firstResolveErr != nil {
+		return "", fmt.Errorf("cannot resolve managed worktree paths: %w", firstResolveErr)
+	}
+	return "", fmt.Errorf("not inside a managed worktree")
 }
 
 func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error) {
@@ -387,5 +428,87 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	} else {
 		checks = append(checks, Check{Name: ".forest", Status: "missing"})
 	}
+	canMutate := true
+	lockStatus, err := state.InspectLock(root)
+	if err != nil {
+		checks = append(checks, Check{Name: "state lock", Status: "invalid: " + err.Error()})
+		canMutate = false
+	} else if !lockStatus.Exists {
+		checks = append(checks, Check{Name: "state lock", Status: "ok"})
+	} else if lockStatus.Stale {
+		checks = append(checks, Check{Name: "state lock", Status: "stale: " + lockStatus.Reason})
+		if fix {
+			if err := state.ClearLock(root); err != nil {
+				return DoctorResult{}, err
+			}
+			checks = append(checks, Check{Name: "state lock cleanup", Status: "cleared"})
+		} else {
+			canMutate = false
+		}
+	} else {
+		checks = append(checks, Check{Name: "state lock", Status: "active: " + lockStatus.Reason})
+		canMutate = false
+	}
+	validateState := func() error {
+		store, err := state.Load(root)
+		if err != nil {
+			checks = append(checks, Check{Name: "state file", Status: "invalid: " + err.Error()})
+			return nil
+		}
+		checks = append(checks, Check{Name: "state file", Status: "ok"})
+		var kept []state.Worktree
+		removed := 0
+		for _, wt := range store.Worktrees {
+			keep := true
+			if !validStatePath(wt.Path) {
+				keep = false
+				checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
+			} else if _, err := os.Stat(filepath.Join(root, wt.Path)); os.IsNotExist(err) {
+				keep = false
+				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "missing: " + wt.Path})
+			} else if err != nil {
+				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: " + err.Error()})
+			}
+			if keep {
+				kept = append(kept, wt)
+			} else {
+				removed++
+			}
+		}
+		if fix && canMutate && removed > 0 {
+			store.Worktrees = kept
+			if err := state.Save(root, store); err != nil {
+				return err
+			}
+			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d invalid record(s)", removed)})
+		} else if removed == 0 {
+			checks = append(checks, Check{Name: "state paths", Status: "ok"})
+		}
+		return nil
+	}
+	if fix && canMutate {
+		if err := state.WithLock(root, "forest doctor --fix", validateState); err != nil {
+			return DoctorResult{}, err
+		}
+	} else if err := validateState(); err != nil {
+		return DoctorResult{}, err
+	}
 	return DoctorResult{Checks: checks}, nil
+}
+
+func validStatePath(path string) bool {
+	if path == "" || path == "." || !filepath.IsLocal(path) {
+		return false
+	}
+	clean := filepath.Clean(path)
+	worktreeRoot := filepath.Clean(config.WorktreeDir)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		clean = strings.ToLower(clean)
+		worktreeRoot = strings.ToLower(worktreeRoot)
+	}
+	if clean == worktreeRoot {
+		return false
+	}
+	rel, err := filepath.Rel(worktreeRoot, clean)
+	return err == nil && filepath.IsLocal(rel)
 }

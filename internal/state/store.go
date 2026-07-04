@@ -42,14 +42,35 @@ func Load(root string) (Store, error) {
 }
 
 func Save(root string, store Store) error {
-	if err := os.MkdirAll(filepath.Join(root, config.StateDir), 0o755); err != nil {
+	dir := filepath.Join(root, config.StateDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(Path(root), append(data, '\n'), 0o644)
+	file, err := os.CreateTemp(dir, "worktrees-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	defer func() { _ = os.Remove(tmp) }()
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return err
+	}
+	return atomicReplace(tmp, Path(root))
 }
 
 func AppendEvent(root string, event Event) error {
