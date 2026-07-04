@@ -64,6 +64,10 @@ type MarkOptions struct {
 	Phase string
 	Agent string
 	Note  string
+	// AgentSet/NoteSet distinguish an explicitly passed empty value
+	// (clear the field) from an omitted flag (keep the stored value).
+	AgentSet bool
+	NoteSet  bool
 }
 
 type MarkResult struct {
@@ -279,10 +283,10 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		}
 		now := time.Now().UTC()
 		wt.Activity.Phase = opts.Phase
-		if opts.Agent != "" {
+		if opts.AgentSet {
 			wt.Activity.Agent = opts.Agent
 		}
-		if opts.Note != "" {
+		if opts.NoteSet {
 			wt.Activity.Note = opts.Note
 		}
 		wt.Activity.LastSeenAt = now
@@ -401,6 +405,16 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		checks = append(checks, Check{Name: ".forest", Status: "created"})
 	} else {
 		checks = append(checks, Check{Name: ".forest", Status: "missing"})
+	}
+	if store, err := state.Load(root); err != nil {
+		checks = append(checks, Check{Name: "state file", Status: "invalid: " + err.Error()})
+	} else {
+		checks = append(checks, Check{Name: "state file", Status: "ok"})
+		for _, wt := range store.Worktrees {
+			if wt.Path == "" || wt.Path == "." || !filepath.IsLocal(wt.Path) {
+				checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
+			}
+		}
 	}
 	return DoctorResult{Checks: checks}, nil
 }

@@ -1,6 +1,11 @@
 package pathutil
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
 
 func TestFromNameUsesForestBranch(t *testing.T) {
 	mapping, err := FromName(".forest/worktrees", "fix-login")
@@ -66,5 +71,37 @@ func TestContains(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected sibling path not to be contained")
+	}
+}
+
+func TestContainsFoldsCaseOnCaseInsensitivePlatforms(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case folding applies to windows and darwin only")
+	}
+	ok, err := Contains("repo/worktrees/Fix-Login", "repo/worktrees/fix-login/sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected differently cased child to be contained")
+	}
+}
+
+func TestContainsResolvesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real")
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "alias")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	ok, err := Contains(target, filepath.Join(link, "sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected symlinked child to be contained in real parent")
 	}
 }
