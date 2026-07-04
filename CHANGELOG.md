@@ -11,4 +11,5 @@ All notable changes to Forest will be documented here.
 - Dashboard-style `list` and `status` output.
 - Worktree cleanup with `forest close`.
 - State and stale-lock repair with `forest doctor --fix`.
+- VS Code search and file watcher ignores for `.forest/worktrees`.
 - Enkii review workflow.
