@@ -269,7 +269,7 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		}
 		opts.Name, err = inferCurrent(store, root)
 		if err != nil {
-			return MarkResult{}, fmt.Errorf("provide a worktree name when not inside a managed worktree: %w", err)
+			return MarkResult{}, fmt.Errorf("cannot infer current worktree: %w", err)
 		}
 	}
 	err = state.WithLock(root, "forest mark", func() error {
@@ -406,6 +406,27 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	} else {
 		checks = append(checks, Check{Name: ".forest", Status: "missing"})
 	}
+	canMutate := true
+	lockStatus, err := state.InspectLock(root)
+	if err != nil {
+		checks = append(checks, Check{Name: "state lock", Status: "invalid: " + err.Error()})
+		canMutate = false
+	} else if !lockStatus.Exists {
+		checks = append(checks, Check{Name: "state lock", Status: "ok"})
+	} else if lockStatus.Stale {
+		checks = append(checks, Check{Name: "state lock", Status: "stale: " + lockStatus.Reason})
+		if fix {
+			if err := state.ClearLock(root); err != nil {
+				return DoctorResult{}, err
+			}
+			checks = append(checks, Check{Name: "state lock cleanup", Status: "cleared"})
+		} else {
+			canMutate = false
+		}
+	} else {
+		checks = append(checks, Check{Name: "state lock", Status: "active: " + lockStatus.Reason})
+		canMutate = false
+	}
 	validateState := func() error {
 		store, err := state.Load(root)
 		if err != nil {
@@ -416,14 +437,23 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		var kept []state.Worktree
 		removed := 0
 		for _, wt := range store.Worktrees {
-			if validStatePath(wt.Path) {
-				kept = append(kept, wt)
-				continue
+			keep := true
+			if !validStatePath(wt.Path) {
+				keep = false
+				checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
+			} else if _, err := os.Stat(filepath.Join(root, wt.Path)); os.IsNotExist(err) {
+				keep = false
+				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "missing: " + wt.Path})
+			} else if err != nil {
+				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: " + err.Error()})
 			}
-			removed++
-			checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
+			if keep {
+				kept = append(kept, wt)
+			} else {
+				removed++
+			}
 		}
-		if fix && removed > 0 {
+		if fix && canMutate && removed > 0 {
 			store.Worktrees = kept
 			if err := state.Save(root, store); err != nil {
 				return err
@@ -434,7 +464,7 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		}
 		return nil
 	}
-	if fix {
+	if fix && canMutate {
 		if err := state.WithLock(root, "forest doctor --fix", validateState); err != nil {
 			return DoctorResult{}, err
 		}
