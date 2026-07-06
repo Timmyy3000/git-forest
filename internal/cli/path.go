@@ -31,6 +31,9 @@ func newPathCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, map[string]string{"path": path})
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), path)
 			return nil
 		},

@@ -17,6 +17,9 @@ func newListCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, result)
+			}
 			return output.RenderList(cmd.OutOrStdout(), result)
 		},
 	}

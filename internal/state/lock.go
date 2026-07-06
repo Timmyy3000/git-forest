@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,10 +20,18 @@ type Lock struct {
 }
 
 type LockStatus struct {
-	Exists bool
-	Stale  bool
-	Reason string
-	Lock   Lock
+	Exists bool   `json:"exists"`
+	Stale  bool   `json:"stale"`
+	Reason string `json:"reason"`
+	Lock   Lock   `json:"lock"`
+}
+
+type LockError struct {
+	Status LockStatus
+}
+
+func (e *LockError) Error() string {
+	return "Forest state is locked; run forest doctor --fix if the lock is stale"
 }
 
 func WithLock(root, command string, fn func() error) error {
@@ -64,6 +73,35 @@ func InspectLock(root string) (LockStatus, error) {
 }
 
 func acquire(root, command string) (func(), error) {
+	unlock, err := tryAcquire(root, command)
+	if err == nil {
+		return unlock, nil
+	}
+	var lockErr *LockError
+	if !errors.As(err, &lockErr) || !lockErr.Status.Stale {
+		return nil, err
+	}
+
+	// A peer process may observe a lock between file creation and payload write.
+	// Re-check before clearing so fresh locks are not mistaken for stale ones.
+	time.Sleep(100 * time.Millisecond)
+	status, inspectErr := InspectLock(root)
+	if inspectErr != nil {
+		return nil, inspectErr
+	}
+	if !status.Exists {
+		return tryAcquire(root, command)
+	}
+	if !status.Stale {
+		return nil, &LockError{Status: status}
+	}
+	if err := ClearLock(root); err != nil {
+		return nil, err
+	}
+	return tryAcquire(root, command)
+}
+
+func tryAcquire(root, command string) (func(), error) {
 	lockPath := lockPath(root)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, err
@@ -71,7 +109,11 @@ func acquire(root, command string) (func(), error) {
 	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
-			return nil, fmt.Errorf("Forest state is locked; run forest doctor --fix if the lock is stale")
+			status, inspectErr := InspectLock(root)
+			if inspectErr != nil {
+				return nil, inspectErr
+			}
+			return nil, &LockError{Status: status}
 		}
 		return nil, err
 	}

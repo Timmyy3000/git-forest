@@ -32,6 +32,9 @@ func newMarkCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, result)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Marked %s as %s\n", result.Name, result.Phase)
 			return nil
 		},

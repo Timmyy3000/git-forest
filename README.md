@@ -46,7 +46,9 @@ repo/
 - Detects merged and patch-equivalent branches
 - Removes merged or selected worktrees with `forest close`
 - Configures VS Code search and file watcher ignores so `.forest/worktrees` stays visible without being indexed
-- Repairs common state and lock issues with `forest doctor --fix`
+- Prints machine-readable output from every command with `--json`
+- Automatically recovers stale same-host state locks before mutating state
+- Repairs common state and setup issues with `forest doctor --fix`
 - Includes embedded coding-agent instructions with a link to `https://forest.timi.click/agents.md`
 
 ## Install
@@ -178,7 +180,7 @@ Coding agents can discover the Forest workflow with:
 forest agents
 ```
 
-This works without web access. To print only the canonical online guide URL:
+Agents should run this at the start of every Forest session so they use the instructions that shipped with the installed CLI. This works without web access. To print only the canonical online guide URL:
 
 ```bash
 forest agents --url

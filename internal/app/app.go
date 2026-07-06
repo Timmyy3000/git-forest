@@ -20,8 +20,8 @@ type App struct{}
 func New() *App { return &App{} }
 
 type InitResult struct {
-	ForestDir string
-	Warnings  []string
+	ForestDir string   `json:"forestDir"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 type AddOptions struct {
@@ -34,11 +34,11 @@ type AddOptions struct {
 }
 
 type AddResult struct {
-	Name     string
-	Branch   string
-	Path     string
-	Copied   []string
-	Warnings []string
+	Name     string   `json:"name"`
+	Branch   string   `json:"branch"`
+	Path     string   `json:"path"`
+	Copied   []string `json:"copied,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type ListOptions struct {
@@ -48,21 +48,23 @@ type ListOptions struct {
 }
 
 type WorktreeView struct {
-	Name        string
-	Branch      string
-	Path        string
-	Agent       string
-	Phase       string
-	Note        string
-	Updated     time.Time
-	Dirty       bool
-	Ahead       int
-	Behind      int
-	Integration string
-	Next        string
+	Name        string    `json:"name"`
+	Branch      string    `json:"branch"`
+	Path        string    `json:"path"`
+	Agent       string    `json:"agent,omitempty"`
+	Phase       string    `json:"phase,omitempty"`
+	Note        string    `json:"note,omitempty"`
+	Updated     time.Time `json:"updated"`
+	Dirty       bool      `json:"dirty"`
+	Ahead       int       `json:"ahead"`
+	Behind      int       `json:"behind"`
+	Integration string    `json:"integration"`
+	Next        string    `json:"next"`
 }
 
-type ListResult struct{ Worktrees []WorktreeView }
+type ListResult struct {
+	Worktrees []WorktreeView `json:"worktrees"`
+}
 
 type MarkOptions struct {
 	Name  string
@@ -76,8 +78,8 @@ type MarkOptions struct {
 }
 
 type MarkResult struct {
-	Name  string
-	Phase string
+	Name  string `json:"name"`
+	Phase string `json:"phase"`
 }
 
 type CloseOptions struct {
@@ -90,19 +92,21 @@ type CloseOptions struct {
 }
 
 type CloseResult struct {
-	Closed  []string
-	Skipped []Skipped
+	Closed  []string  `json:"closed"`
+	Skipped []Skipped `json:"skipped"`
 }
 
 type Skipped struct {
-	Name   string
-	Reason string
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
-type DoctorResult struct{ Checks []Check }
+type DoctorResult struct {
+	Checks []Check `json:"checks"`
+}
 type Check struct {
-	Name   string
-	Status string
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 func (a *App) Init(ctx context.Context) (InitResult, error) {

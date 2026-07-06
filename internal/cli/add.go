@@ -30,6 +30,9 @@ func newAddCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, result)
+			}
 			if opts.Quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), result.Path)
 				return nil

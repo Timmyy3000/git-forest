@@ -11,9 +11,11 @@ All notable changes to Forest will be documented here.
 - Dashboard-style `list` and `status` output.
 - Worktree cleanup with `forest close`.
 - State and stale-lock repair with `forest doctor --fix`.
+- Automatic stale same-host lock recovery before mutating state.
+- Machine-readable `--json` output across the CLI.
 - VS Code search and file watcher ignores for `.forest/worktrees`.
 - Enkii review workflow.
 - GitHub release workflow for prebuilt Linux, macOS, and Windows binaries.
 - Shell installer for downloading release assets without requiring Go.
 - `forest version` command with release build metadata.
-- `forest agents` command with embedded coding-agent instructions and `--url` for the online guide.
+- `forest agents` command with embedded coding-agent instructions, `--url` for the online guide, and a first-step session contract for agents.
