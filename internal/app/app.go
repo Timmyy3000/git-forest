@@ -468,10 +468,19 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	} else if lockStatus.Stale {
 		checks = append(checks, Check{Name: "state lock", Status: "stale: " + lockStatus.Reason})
 		if fix {
-			if err := state.ClearLock(root); err != nil {
+			latest, cleared, err := state.ClearStaleLock(root)
+			if err != nil {
 				return DoctorResult{}, err
 			}
-			checks = append(checks, Check{Name: "state lock cleanup", Status: "cleared"})
+			switch {
+			case cleared:
+				checks = append(checks, Check{Name: "state lock cleanup", Status: "cleared"})
+			case !latest.Exists:
+				checks = append(checks, Check{Name: "state lock cleanup", Status: "already clear"})
+			default:
+				checks = append(checks, Check{Name: "state lock cleanup", Status: "skipped: " + latest.Reason})
+				canMutate = false
+			}
 		} else {
 			canMutate = false
 		}

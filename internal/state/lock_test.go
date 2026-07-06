@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,8 +94,42 @@ func TestWithLockRefusesActiveLock(t *testing.T) {
 	if lockErr.Status.Stale {
 		t.Fatalf("expected active lock status, got %+v", lockErr.Status)
 	}
+	if strings.Contains(lockErr.Error(), "doctor --fix") {
+		t.Fatalf("active lock error should not suggest doctor --fix: %s", lockErr.Error())
+	}
 	if called {
 		t.Fatal("callback should not run when lock is active")
+	}
+}
+
+func TestClearStaleLockRefusesLockThatBecomesActive(t *testing.T) {
+	root := t.TempDir()
+	writeLock(t, root, Lock{PID: 99999999, Hostname: localHost(t), Command: "forest old", CreatedAt: time.Now().UTC()})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(20 * time.Millisecond)
+		writeLock(t, root, Lock{PID: os.Getpid(), Hostname: localHost(t), Command: "forest fresh", CreatedAt: time.Now().UTC()})
+	}()
+
+	status, cleared, err := ClearStaleLock(root)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared {
+		t.Fatal("expected fresh active lock to be preserved")
+	}
+	if status.Stale {
+		t.Fatalf("expected rechecked active lock, got %+v", status)
+	}
+	current, err := InspectLock(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !current.Exists || current.Stale || current.Lock.Command != "forest fresh" {
+		t.Fatalf("expected fresh lock to remain, got %+v", current)
 	}
 }
 

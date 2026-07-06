@@ -31,7 +31,13 @@ type LockError struct {
 }
 
 func (e *LockError) Error() string {
-	return "Forest state is locked; run forest doctor --fix if the lock is stale"
+	if e != nil && e.Status.Exists && !e.Status.Stale {
+		return "Forest state is locked by an active process; wait and retry"
+	}
+	if e != nil && e.Status.Stale {
+		return "Forest state lock is stale; retry or run forest doctor --fix if it persists"
+	}
+	return "Forest state is locked; wait and retry"
 }
 
 func WithLock(root, command string, fn func() error) error {
@@ -58,13 +64,18 @@ func InspectLock(root string) (LockStatus, error) {
 	if lock.PID <= 0 {
 		return LockStatus{Exists: true, Stale: true, Reason: "missing process id", Lock: lock}, nil
 	}
-	host, hostErr := os.Hostname()
-	if lock.Hostname != "" && host != "" && !strings.EqualFold(lock.Hostname, host) {
-		return LockStatus{Exists: true, Reason: "held by another host", Lock: lock}, nil
-	}
 	reasonPrefix := ""
+	host, hostErr := os.Hostname()
 	if hostErr != nil {
 		reasonPrefix = "cannot determine local host: " + hostErr.Error() + "; "
+	}
+	if lock.Hostname != "" {
+		if hostErr != nil || host == "" {
+			return LockStatus{Exists: true, Reason: reasonPrefix + "held by host " + lock.Hostname, Lock: lock}, nil
+		}
+		if !strings.EqualFold(lock.Hostname, host) {
+			return LockStatus{Exists: true, Reason: "held by another host", Lock: lock}, nil
+		}
 	}
 	if !processRunning(lock.PID) {
 		return LockStatus{Exists: true, Stale: true, Reason: fmt.Sprintf("%sprocess %d is not running", reasonPrefix, lock.PID), Lock: lock}, nil
@@ -82,21 +93,15 @@ func acquire(root, command string) (func(), error) {
 		return nil, err
 	}
 
-	// A peer process may observe a lock between file creation and payload write.
-	// Re-check before clearing so fresh locks are not mistaken for stale ones.
-	time.Sleep(100 * time.Millisecond)
-	status, inspectErr := InspectLock(root)
-	if inspectErr != nil {
-		return nil, inspectErr
+	status, cleared, clearErr := ClearStaleLock(root)
+	if clearErr != nil {
+		return nil, clearErr
 	}
 	if !status.Exists {
 		return tryAcquire(root, command)
 	}
-	if !status.Stale {
+	if !cleared {
 		return nil, &LockError{Status: status}
-	}
-	if err := ClearLock(root); err != nil {
-		return nil, err
 	}
 	return tryAcquire(root, command)
 }
@@ -138,6 +143,23 @@ func ClearLock(root string) error {
 		return nil
 	}
 	return err
+}
+
+func ClearStaleLock(root string) (LockStatus, bool, error) {
+	// A peer process may observe a lock between file creation and payload write.
+	// Re-check before clearing so fresh locks are not mistaken for stale ones.
+	time.Sleep(100 * time.Millisecond)
+	status, err := InspectLock(root)
+	if err != nil {
+		return LockStatus{}, false, err
+	}
+	if !status.Exists || !status.Stale {
+		return status, false, nil
+	}
+	if err := ClearLock(root); err != nil {
+		return status, false, err
+	}
+	return status, true, nil
 }
 
 func lockPath(root string) string {
