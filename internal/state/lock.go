@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Timmyy3000/git-forest/internal/config"
@@ -45,8 +48,32 @@ func WithLock(root, command string, fn func() error) error {
 	if err != nil {
 		return err
 	}
+	stopSignals := cleanupLockOnSignal(unlock)
 	defer unlock()
+	defer stopSignals()
 	return fn()
+}
+
+func cleanupLockOnSignal(unlock func()) func() {
+	signals := []os.Signal{os.Interrupt}
+	if runtime.GOOS != "windows" {
+		signals = append(signals, syscall.SIGTERM)
+	}
+	ch := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(ch, signals...)
+	go func() {
+		select {
+		case <-ch:
+			unlock()
+			os.Exit(130)
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(ch)
+		close(done)
+	}
 }
 
 func InspectLock(root string) (LockStatus, error) {

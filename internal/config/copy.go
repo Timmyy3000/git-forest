@@ -4,9 +4,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-func copyPath(src, dst string) error {
+func copyPath(entry, src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -20,6 +21,12 @@ func copyPath(src, dst string) error {
 			if err != nil {
 				return err
 			}
+			if shouldSkipCopyRel(entry, rel) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			target := filepath.Join(dst, rel)
 			if d.IsDir() {
 				return os.MkdirAll(target, 0o755)
@@ -28,6 +35,11 @@ func copyPath(src, dst string) error {
 		})
 	}
 	return copyFile(src, dst)
+}
+
+func shouldSkipCopyRel(entry, rel string) bool {
+	clean := filepath.ToSlash(filepath.Clean(filepath.Join(entry, rel)))
+	return clean == ".claude/worktrees" || strings.HasPrefix(clean, ".claude/worktrees/")
 }
 
 func copyFile(src, dst string) error {

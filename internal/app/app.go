@@ -174,14 +174,12 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 		if err := git.WorktreeAdd(ctx, root, absPath, mapping.Branch, base, branchExists); err != nil {
 			return err
 		}
-		cfg, _ := config.Load(root)
-		copied, warnings := config.CopyReusable(root, absPath, cfg)
 		now := time.Now().UTC()
 		actor := state.Actor{Kind: "human"}
 		if opts.Agent != "" {
 			actor = state.Actor{Kind: "agent", Name: opts.Agent}
 		}
-		store.Worktrees = append(store.Worktrees, state.Worktree{
+		worktree := state.Worktree{
 			ID:        mapping.Identity,
 			Name:      mapping.Identity,
 			Branch:    mapping.Branch,
@@ -190,12 +188,23 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			CreatedAt: now,
 			CreatedBy: actor,
 			Activity:  state.Activity{Phase: "claimed", Agent: opts.Agent, LastSeenAt: now},
-			Status:    state.Status{LastKnown: "active", LastCheckedAt: now},
-		})
+			Status:    state.Status{LastKnown: "creating", LastCheckedAt: now},
+		}
+		store.Worktrees = append(store.Worktrees, worktree)
 		if err := state.Save(root, store); err != nil {
 			return err
 		}
-		_ = state.AppendEvent(root, state.Event{Time: now, Type: "created", ID: mapping.Identity})
+		_ = state.AppendEvent(root, state.Event{Time: now, Type: "creating", ID: mapping.Identity})
+		cfg, _ := config.Load(root)
+		copied, warnings := config.CopyReusable(root, absPath, cfg)
+		worktree.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
+		if _, idx, ok := store.Find(mapping.Identity); ok {
+			store.Worktrees[idx] = worktree
+		}
+		if err := state.Save(root, store); err != nil {
+			return err
+		}
+		_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "created", ID: mapping.Identity})
 		result = AddResult{Name: mapping.Identity, Branch: mapping.Branch, Path: absPath, Copied: copied, Warnings: warnings}
 		return nil
 	})
@@ -458,6 +467,16 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			checks = append(checks, Check{Name: "VS Code ignores", Status: "missing"})
 		}
 	}
+	if fix {
+		changed, err := config.RepairLegacyCopyDefault(root)
+		if err != nil {
+			checks = append(checks, Check{Name: "copy defaults", Status: "invalid: " + err.Error()})
+		} else if changed {
+			checks = append(checks, Check{Name: "copy defaults", Status: "updated"})
+		} else {
+			checks = append(checks, Check{Name: "copy defaults", Status: "ok"})
+		}
+	}
 	canMutate := true
 	lockStatus, err := state.InspectLock(root)
 	if err != nil {
@@ -495,6 +514,13 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			return nil
 		}
 		checks = append(checks, Check{Name: "state file", Status: "ok"})
+		adopted, untracked := a.reconcileGitWorktrees(ctx, root, &store, fix && canMutate)
+		for _, id := range untracked {
+			checks = append(checks, Check{Name: "worktree " + id, Status: "untracked by Forest state"})
+		}
+		if adopted > 0 {
+			checks = append(checks, Check{Name: "worktree adoption", Status: fmt.Sprintf("adopted %d git worktree(s)", adopted)})
+		}
 		var kept []state.Worktree
 		removed := 0
 		for _, wt := range store.Worktrees {
@@ -521,6 +547,11 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			}
 			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d invalid record(s)", removed)})
 		} else if removed == 0 {
+			if fix && canMutate && adopted > 0 {
+				if err := state.Save(root, store); err != nil {
+					return err
+				}
+			}
 			checks = append(checks, Check{Name: "state paths", Status: "ok"})
 		}
 		return nil
@@ -533,6 +564,67 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		return DoctorResult{}, err
 	}
 	return DoctorResult{Checks: checks}, nil
+}
+
+func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []string) {
+	worktrees, err := git.Worktrees(ctx, root)
+	if err != nil {
+		return 0, nil
+	}
+	now := time.Now().UTC()
+	base := store.DefaultBase
+	if base == "" {
+		base = git.DefaultBranch(ctx, root)
+	}
+	var untracked []string
+	adopted := 0
+	for _, wt := range worktrees {
+		rel, err := filepath.Rel(root, wt.Path)
+		if err != nil {
+			continue
+		}
+		rel = filepath.Clean(rel)
+		if !validStatePath(rel) {
+			continue
+		}
+		identityRel, err := filepath.Rel(filepath.Clean(config.WorktreeDir), rel)
+		if err != nil || !filepath.IsLocal(identityRel) {
+			continue
+		}
+		identity := filepath.ToSlash(identityRel)
+		branch := wt.Branch
+		if branch == "" {
+			branch = identity
+		}
+		if _, _, ok := store.Find(identity); ok {
+			continue
+		}
+		if _, _, ok := store.Find(branch); ok {
+			continue
+		}
+		untracked = append(untracked, identity)
+		if !adopt {
+			continue
+		}
+		store.Worktrees = append(store.Worktrees, state.Worktree{
+			ID:        identity,
+			Name:      identity,
+			Branch:    branch,
+			Path:      rel,
+			Base:      base,
+			CreatedAt: now,
+			CreatedBy: state.Actor{Kind: "doctor"},
+			Activity: state.Activity{
+				Phase:      "adopted",
+				Note:       "adopted by forest doctor --fix",
+				LastSeenAt: now,
+			},
+			Status: state.Status{LastKnown: "active", LastCheckedAt: now},
+		})
+		_ = state.AppendEvent(root, state.Event{Time: now, Type: "adopted", ID: identity})
+		adopted++
+	}
+	return adopted, untracked
 }
 
 func validStatePath(path string) bool {

@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+type WorktreeInfo struct {
+	Path   string
+	Branch string
+	Head   string
+}
+
 func Run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -83,17 +89,53 @@ func firstWorktree(ctx context.Context, dir string) (string, bool) {
 }
 
 func worktreePaths(ctx context.Context, dir string) ([]string, error) {
-	out, err := Run(ctx, dir, "worktree", "list", "--porcelain")
+	worktrees, err := Worktrees(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
-	for _, line := range strings.Split(out, "\n") {
-		if path, ok := strings.CutPrefix(line, "worktree "); ok {
-			paths = append(paths, filepath.Clean(path))
-		}
+	for _, wt := range worktrees {
+		paths = append(paths, wt.Path)
 	}
 	return paths, nil
+}
+
+func Worktrees(ctx context.Context, dir string) ([]WorktreeInfo, error) {
+	out, err := Run(ctx, dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var worktrees []WorktreeInfo
+	var current *WorktreeInfo
+	flush := func() {
+		if current != nil && current.Path != "" {
+			worktrees = append(worktrees, *current)
+		}
+		current = nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			flush()
+			continue
+		}
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			flush()
+			current = &WorktreeInfo{Path: filepath.Clean(path)}
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		if head, ok := strings.CutPrefix(line, "HEAD "); ok {
+			current.Head = head
+			continue
+		}
+		if branch, ok := strings.CutPrefix(line, "branch "); ok {
+			current.Branch = strings.TrimPrefix(branch, "refs/heads/")
+		}
+	}
+	flush()
+	return worktrees, nil
 }
 
 func BranchExists(ctx context.Context, root, branch string) bool {

@@ -13,6 +13,8 @@ All notable changes to Forest will be documented here.
 - State and stale-lock repair with `forest doctor --fix`.
 - Automatic stale same-host lock recovery before mutating state.
 - Machine-readable `--json` output across the CLI.
+- Safer reusable copy defaults, with `.claude/worktrees/**` excluded even when `.claude` is opted in and `doctor --fix` migration for the old generated copy list.
+- `forest add` now records a creating state before copying reusable files, and `forest doctor --fix` can adopt Git-known Forest worktrees missing from state.
 - VS Code search and file watcher ignores for `.forest/worktrees`.
 - Enkii review workflow.
 - GitHub release workflow for prebuilt Linux, macOS, and Windows binaries.

@@ -60,7 +60,7 @@ Use `--from <ref>` to base the branch on something other than the repo default b
 forest add -b fix/pdf-signature --from dev --agent <your-name> --json
 ```
 
-Forest copies repo-configured local files (`.env`, agent config, skills, etc., per `[add] copy` in `.forest/config.toml`) into the new worktree automatically.
+Forest copies repo-configured local files per `[add] copy` in `.forest/config.toml`. The default is intentionally small: `.env` and `.env.local`. Larger agent state directories should be opt-in per repository, and Forest always skips `.claude/worktrees/**`.
 
 ### 3. Work Inside The Worktree
 

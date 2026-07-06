@@ -19,8 +19,10 @@ type Config struct {
 	Copy []string
 }
 
+var legacyDefaultCopy = []string{".env", ".env.local", ".claude", ".cursor", ".agent", "skills"}
+
 func Default() Config {
-	return Config{Copy: []string{".env", ".env.local", ".claude", ".cursor", ".agent", "skills"}}
+	return Config{Copy: []string{".env", ".env.local"}}
 }
 
 func Ensure(root string) error {
@@ -42,7 +44,7 @@ func ensureConfig(root string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return os.WriteFile(path, []byte("[add]\ncopy = [\".env\", \".env.local\", \".claude\", \".cursor\", \".agent\", \"skills\"]\n"), 0o644)
+	return os.WriteFile(path, []byte("[add]\ncopy = [\".env\", \".env.local\"]\n"), 0o644)
 }
 
 func Load(root string) (Config, error) {
@@ -60,6 +62,22 @@ func Load(root string) (Config, error) {
 		cfg.Copy = copyValues
 	}
 	return cfg, nil
+}
+
+func RepairLegacyCopyDefault(root string) (bool, error) {
+	path := filepath.Join(root, ConfigPath)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	copyValues := parseCopyList(string(data))
+	if !equalStrings(copyValues, legacyDefaultCopy) {
+		return false, nil
+	}
+	return true, os.WriteFile(path, []byte("[add]\ncopy = [\".env\", \".env.local\"]\n"), 0o644)
 }
 
 func parseCopyList(data string) []string {
@@ -81,6 +99,18 @@ func parseCopyList(data string) []string {
 		}
 	}
 	return values
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func EnsureGitignore(root string) error {
@@ -123,7 +153,7 @@ func CopyReusable(root, worktree string, cfg Config) (copied, warnings []string)
 			warnings = append(warnings, fmt.Sprintf("missing reusable path %s", entry))
 			continue
 		}
-		if err := copyPath(src, dst); err != nil {
+		if err := copyPath(entry, src, dst); err != nil {
 			warnings = append(warnings, fmt.Sprintf("copy %s failed: %v", entry, err))
 			continue
 		}
