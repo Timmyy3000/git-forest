@@ -25,5 +25,6 @@ func newStatusCommand(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "filter by agent")
 	cmd.Flags().StringVar(&opts.Phase, "phase", "", "filter by activity phase")
+	cmd.Flags().BoolVar(&opts.Fast, "fast", false, "skip git checks (dirty, ahead/behind, integration) for instant output")
 	return cmd
 }

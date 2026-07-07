@@ -93,6 +93,8 @@ forest list --json
 forest status --json
 ```
 
+Add `--fast` to `list`/`status` when you only need names, agents, and phases: it skips the per-worktree git checks (dirty, ahead/behind, integration), returns instantly, and marks each entry with `"checksSkipped": true`. Zero values for `dirty`/`ahead`/`behind` carry no meaning in that mode.
+
 ### 6. Cleanup Only When Told
 
 ```bash
@@ -118,8 +120,8 @@ Never delete `.forest/worktrees/*` directories or run `git worktree remove` manu
 |---|---|---|
 | `forest init` | Make repo Forest-managed | `--json` `--quiet` |
 | `forest add <name>` | Create branch `forest/<name>` and worktree | `-b <branch>` `--from <ref>` `--agent` `--fetch` `--json` `--quiet` |
-| `forest list` | Dashboard: name, agent, phase, git state, integration | `--agent` `--phase` `--verbose` `--json` |
-| `forest status` | Grouped active / blocked / ready views | `--agent` `--phase` `--json` |
+| `forest list` | Dashboard: name, agent, phase, git state, integration | `--agent` `--phase` `--verbose` `--fast` `--json` |
+| `forest status` | Grouped active / blocked / ready views | `--agent` `--phase` `--fast` `--json` |
 | `forest mark` | Update phase, agent, and note | `--phase` `--agent` `--note` `--json` |
 | `forest path [name]` | Print a worktree path | `--current` `--json` |
 | `forest close <name>` | Safely remove a finished worktree | `--merged` `--yes` `--include-dirty` `--include-unmerged` `--delete-branch` `--json` |

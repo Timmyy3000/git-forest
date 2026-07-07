@@ -23,24 +23,42 @@ func RenderList(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(tw, "NAME\tAGENT\tPHASE\tGIT\tINTEGRATION\tUPDATED\tNEXT")
 	for _, wt := range result.Worktrees {
 		gitState := "clean"
-		if wt.Dirty {
-			gitState = "dirty"
+		integration := styleIntegration(wt.Integration)
+		next := wt.Next
+		if wt.ChecksSkipped {
+			gitState = "-"
+			integration = "-"
+			next = "-"
+		} else {
+			if wt.Dirty {
+				gitState = "dirty"
+			}
+			if wt.Ahead > 0 || wt.Behind > 0 {
+				gitState = fmt.Sprintf("%s +%d -%d", gitState, wt.Ahead, wt.Behind)
+			}
 		}
-		if wt.Ahead > 0 || wt.Behind > 0 {
-			gitState = fmt.Sprintf("%s +%d -%d", gitState, wt.Ahead, wt.Behind)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), gitState, styleIntegration(wt.Integration), age(wt.Updated), wt.Next)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), gitState, integration, age(wt.Updated), next)
 	}
 	return tw.Flush()
 }
 
 func RenderStatus(w io.Writer, result app.ListResult) error {
 	groups := map[string][]app.WorktreeView{}
+	checksSkipped := false
 	for _, wt := range result.Worktrees {
+		if wt.ChecksSkipped {
+			checksSkipped = true
+		}
 		group := "Active"
 		switch {
 		case wt.Phase == "blocked":
 			group = "Blocked"
+		case wt.ChecksSkipped:
+			// Dirty and Next were not computed, so the git-based groups
+			// (Ready for review / Ready to close) cannot be determined.
+			if wt.Phase == "" {
+				group = "Unknown activity"
+			}
 		case wt.Next == "close":
 			group = "Ready to close"
 		case wt.Dirty:
@@ -59,6 +77,9 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 		for _, wt := range items {
 			fmt.Fprintf(w, "  %s  %s  %s  %s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), wt.Note)
 		}
+	}
+	if checksSkipped {
+		fmt.Fprintln(w, warnStyle.Render("git checks skipped (--fast): review/close grouping unavailable"))
 	}
 	return nil
 }
