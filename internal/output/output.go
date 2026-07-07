@@ -46,6 +46,9 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 	groups := map[string][]app.WorktreeView{}
 	checksSkipped := false
 	for _, wt := range result.Worktrees {
+		if wt.ChecksSkipped {
+			checksSkipped = true
+		}
 		group := "Active"
 		switch {
 		case wt.Phase == "blocked":
@@ -53,7 +56,6 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 		case wt.ChecksSkipped:
 			// Dirty and Next were not computed, so the git-based groups
 			// (Ready for review / Ready to close) cannot be determined.
-			checksSkipped = true
 			if wt.Phase == "" {
 				group = "Unknown activity"
 			}
