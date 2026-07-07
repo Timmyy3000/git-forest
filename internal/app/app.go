@@ -300,23 +300,35 @@ type gitChecks struct {
 }
 
 // collectGitChecks runs the three per-worktree git checks concurrently.
+// Each goroutine writes its own local before the WaitGroup barrier publishes
+// the results; a cancelled context abandons queued checks instead of waiting
+// on a semaphore slot.
 func collectGitChecks(ctx context.Context, path, base string) gitChecks {
-	var checks gitChecks
-	var wg sync.WaitGroup
+	var (
+		wg          sync.WaitGroup
+		dirty       bool
+		ahead       int
+		behind      int
+		integration string
+	)
 	run := func(fn func()) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			gitCheckSlots <- struct{}{}
+			select {
+			case gitCheckSlots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-gitCheckSlots }()
 			fn()
 		}()
 	}
-	run(func() { checks.dirty = git.IsDirty(ctx, path) })
-	run(func() { checks.ahead, checks.behind = git.AheadBehind(ctx, path, base) })
-	run(func() { checks.integration = git.Integrated(ctx, path, base) })
+	run(func() { dirty = git.IsDirty(ctx, path) })
+	run(func() { ahead, behind = git.AheadBehind(ctx, path, base) })
+	run(func() { integration = git.Integrated(ctx, path, base) })
 	wg.Wait()
-	return checks
+	return gitChecks{dirty: dirty, ahead: ahead, behind: behind, integration: integration}
 }
 
 func nextAction(dirty bool, integration, phase string) string {
