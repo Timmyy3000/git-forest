@@ -71,6 +71,27 @@ func TestRepairLegacyCopyDefaultPreservesCustomCopyList(t *testing.T) {
 	}
 }
 
+func TestRepairLegacyCopyDefaultIgnoresCopyMentionsInComments(t *testing.T) {
+	root := t.TempDir()
+	custom := "# copy = [\".env\", \".env.local\", \".claude\", \".cursor\", \".agent\", \"skills\"]\n[add]\ncopy = [\".env\", \"skills\"]\n"
+	writeFile(t, filepath.Join(root, ConfigPath), custom)
+
+	changed, err := RepairLegacyCopyDefault(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("commented legacy list should not trigger migration")
+	}
+	data, err := os.ReadFile(filepath.Join(root, ConfigPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != custom {
+		t.Fatalf("custom config changed: %q", data)
+	}
+}
+
 func TestCopyReusableSkipsClaudeWorktreesWhenClaudeIsOptedIn(t *testing.T) {
 	root := t.TempDir()
 	worktree := filepath.Join(root, ".forest", "worktrees", "feature", "x")
@@ -89,6 +110,27 @@ func TestCopyReusableSkipsClaudeWorktreesWhenClaudeIsOptedIn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(worktree, ".claude", "worktrees")); !os.IsNotExist(err) {
 		t.Fatalf("expected .claude/worktrees to be skipped, got err=%v", err)
+	}
+}
+
+func TestCopyReusableSkipsClaudeWorktreesWithNonCanonicalCase(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, ".forest", "worktrees", "feature", "x")
+	writeFile(t, filepath.Join(root, ".Claude", "settings.json"), "settings")
+	writeFile(t, filepath.Join(root, ".Claude", "Worktrees", "agent", "README.md"), "nested checkout")
+
+	copied, warnings := CopyReusable(root, worktree, Config{Copy: []string{".Claude"}})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	if !reflect.DeepEqual(copied, []string{".Claude"}) {
+		t.Fatalf("copied = %#v", copied)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".Claude", "settings.json")); err != nil {
+		t.Fatalf("expected .Claude/settings.json to be copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".Claude", "Worktrees")); !os.IsNotExist(err) {
+		t.Fatalf("expected .Claude/Worktrees to be skipped, got err=%v", err)
 	}
 }
 

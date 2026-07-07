@@ -95,6 +95,46 @@ func TestDoctorFixAdoptsGitWorktreeMissingFromState(t *testing.T) {
 	}
 }
 
+func TestDoctorFixMarksExistingCreatingWorktreeActive(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	now := state.NewStore(root)
+	now.Worktrees = append(now.Worktrees, state.Worktree{
+		ID:     "feature/creating",
+		Name:   "feature/creating",
+		Branch: "feature/creating",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "creating"),
+		Status: state.Status{LastKnown: "creating"},
+	})
+	if err := state.Save(root, now); err != nil {
+		t.Fatal(err)
+	}
+	worktreePath := filepath.Join(root, config.WorktreeDir, "feature", "creating")
+	runGit(t, root, "worktree", "add", "-b", "feature/creating", worktreePath, "HEAD")
+	t.Chdir(root)
+
+	result, err := New().Doctor(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheck(result, "worktree feature/creating status cleanup", "marked active") {
+		t.Fatalf("expected creating cleanup check, got %#v", result.Checks)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, _, ok := store.Find("feature/creating")
+	if !ok {
+		t.Fatal("expected worktree to remain in state")
+	}
+	if wt.Status.LastKnown != "active" {
+		t.Fatalf("status = %q, want active", wt.Status.LastKnown)
+	}
+}
+
 func TestReconcileGitWorktreesReturnsGitErrors(t *testing.T) {
 	root := t.TempDir()
 	store := state.NewStore(root)

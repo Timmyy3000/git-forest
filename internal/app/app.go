@@ -530,6 +530,7 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		}
 		var kept []state.Worktree
 		removed := 0
+		changed := adopted
 		for _, wt := range store.Worktrees {
 			keep := true
 			if !validStatePath(wt.Path) {
@@ -540,6 +541,13 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "missing: " + wt.Path})
 			} else if err != nil {
 				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: " + err.Error()})
+			} else if wt.Status.LastKnown == "creating" {
+				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "creating"})
+				if fix && canMutate {
+					wt.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
+					checks = append(checks, Check{Name: "worktree " + wt.ID + " status cleanup", Status: "marked active"})
+					changed++
+				}
 			}
 			if keep {
 				kept = append(kept, wt)
@@ -554,7 +562,8 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			}
 			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d invalid record(s)", removed)})
 		} else if removed == 0 {
-			if fix && canMutate && adopted > 0 {
+			if fix && canMutate && changed > 0 {
+				store.Worktrees = kept
 				if err := state.Save(root, store); err != nil {
 					return err
 				}

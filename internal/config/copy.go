@@ -39,6 +39,7 @@ func copyPath(entry, src, dst string) error {
 
 func shouldSkipCopyRel(entry, rel string) bool {
 	clean := filepath.ToSlash(filepath.Clean(filepath.Join(entry, rel)))
+	clean = strings.ToLower(clean)
 	return clean == ".claude/worktrees" || strings.HasPrefix(clean, ".claude/worktrees/")
 }
 

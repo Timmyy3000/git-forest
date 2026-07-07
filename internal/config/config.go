@@ -81,16 +81,27 @@ func RepairLegacyCopyDefault(root string) (bool, error) {
 }
 
 func parseCopyList(data string) []string {
-	idx := strings.Index(data, "copy")
-	if idx == -1 {
-		return nil
+	for _, rawLine := range strings.Split(data, "\n") {
+		line := strings.TrimSpace(stripTOMLComment(rawLine))
+		if line == "" || strings.HasPrefix(line, "[") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "copy" {
+			continue
+		}
+		return parseStringList(value)
 	}
-	start := strings.Index(data[idx:], "[")
-	end := strings.Index(data[idx:], "]")
+	return nil
+}
+
+func parseStringList(value string) []string {
+	start := strings.Index(value, "[")
+	end := strings.LastIndex(value, "]")
 	if start == -1 || end == -1 || end <= start {
 		return nil
 	}
-	body := data[idx+start+1 : idx+end]
+	body := value[start+1 : end]
 	var values []string
 	for _, raw := range strings.Split(body, ",") {
 		value := strings.Trim(strings.TrimSpace(raw), "\"'")
@@ -99,6 +110,27 @@ func parseCopyList(data string) []string {
 		}
 	}
 	return values
+}
+
+func stripTOMLComment(line string) string {
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for idx, r := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && inDouble:
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case r == '#' && !inSingle && !inDouble:
+			return line[:idx]
+		}
+	}
+	return line
 }
 
 func equalStrings(a, b []string) bool {
