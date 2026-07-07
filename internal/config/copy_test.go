@@ -185,3 +185,67 @@ func TestLoadAcceptsBareCopyKeyBeforeAnySection(t *testing.T) {
 		t.Fatalf("config copy = %#v, want %#v", cfg.Copy, want)
 	}
 }
+
+func TestLoadPrefersAddSectionOverBareCopyKey(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ConfigPath), "copy = [\"bare\"]\n[add]\ncopy = [\".env\", \"skills\"]\n")
+
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".env", "skills"}
+	if !reflect.DeepEqual(cfg.Copy, want) {
+		t.Fatalf("config copy = %#v, want %#v", cfg.Copy, want)
+	}
+}
+
+func TestRepairLegacyCopyDefaultPreservesCommentsAndOtherKeys(t *testing.T) {
+	root := t.TempDir()
+	original := "# forest config\n[add]\n# reusable files\ncopy = [\".env\", \".env.local\", \".claude\", \".cursor\", \".agent\", \"skills\"]\nfetch = true\n"
+	writeFile(t, filepath.Join(root, ConfigPath), original)
+
+	changed, err := RepairLegacyCopyDefault(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected legacy list to migrate")
+	}
+	data, err := os.ReadFile(filepath.Join(root, ConfigPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# forest config\n[add]\n# reusable files\ncopy = [\".env\", \".env.local\"]\nfetch = true\n"
+	if string(data) != want {
+		t.Fatalf("config after repair = %q, want %q", data, want)
+	}
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Copy, []string{".env", ".env.local"}) {
+		t.Fatalf("config copy = %#v", cfg.Copy)
+	}
+}
+
+func TestRepairLegacyCopyDefaultMigratesMultiLineLegacyList(t *testing.T) {
+	root := t.TempDir()
+	original := "[add]\ncopy = [\n  \".env\",\n  \".env.local\",\n  \".claude\",\n  \".cursor\",\n  \".agent\",\n  \"skills\",\n]\n"
+	writeFile(t, filepath.Join(root, ConfigPath), original)
+
+	changed, err := RepairLegacyCopyDefault(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected legacy list to migrate")
+	}
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Copy, []string{".env", ".env.local"}) {
+		t.Fatalf("config copy = %#v", cfg.Copy)
+	}
+}

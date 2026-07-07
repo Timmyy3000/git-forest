@@ -73,16 +73,41 @@ func RepairLegacyCopyDefault(root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	copyValues := parseCopyList(string(data))
-	if !equalStrings(copyValues, legacyDefaultCopy) {
+	lines := strings.Split(string(data), "\n")
+	assignment, ok := findCopyAssignment(lines)
+	if !ok || !equalStrings(parseStringList(assignment.value), legacyDefaultCopy) {
 		return false, nil
 	}
-	return true, os.WriteFile(path, []byte("[add]\ncopy = [\".env\", \".env.local\"]\n"), 0o644)
+	// Replace only the copy assignment so comments and other keys survive.
+	updated := make([]string, 0, len(lines))
+	updated = append(updated, lines[:assignment.start]...)
+	updated = append(updated, `copy = [".env", ".env.local"]`)
+	updated = append(updated, lines[assignment.end+1:]...)
+	return true, os.WriteFile(path, []byte(strings.Join(updated, "\n")), 0o644)
 }
 
 func parseCopyList(data string) []string {
+	assignment, ok := findCopyAssignment(strings.Split(data, "\n"))
+	if !ok {
+		return nil
+	}
+	return parseStringList(assignment.value)
+}
+
+// copyAssignment records where a copy key's assignment lives (inclusive line
+// indexes, covering multi-line arrays) and its accumulated raw value.
+type copyAssignment struct {
+	start, end int
+	value      string
+}
+
+// findCopyAssignment locates the copy key Forest honors: the one in the [add]
+// section, falling back to a bare top-level copy key only when no [add] copy
+// exists. Keys in other sections are ignored.
+func findCopyAssignment(lines []string) (copyAssignment, bool) {
 	section := ""
-	lines := strings.Split(data, "\n")
+	var bare copyAssignment
+	bareFound := false
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(stripTOMLComment(lines[i]))
 		if line == "" {
@@ -99,13 +124,21 @@ func parseCopyList(data string) []string {
 		if section != "" && section != "add" {
 			continue
 		}
+		start := i
 		for !strings.Contains(value, "]") && i+1 < len(lines) {
 			i++
 			value += "\n" + stripTOMLComment(lines[i])
 		}
-		return parseStringList(value)
+		assignment := copyAssignment{start: start, end: i, value: value}
+		if section == "add" {
+			return assignment, true
+		}
+		if !bareFound {
+			bare = assignment
+			bareFound = true
+		}
 	}
-	return nil
+	return bare, bareFound
 }
 
 func parseStringList(value string) []string {
