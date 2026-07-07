@@ -10,6 +10,10 @@ import (
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
+// outputJSON is package-level state bound to the persistent --json flag each
+// time newRootCommand runs. Production binds it once per process; tests that
+// execute commands must reset it to false before each run and must not use
+// t.Parallel() while sharing it.
 var outputJSON bool
 
 type errorOutput struct {

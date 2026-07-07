@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,13 +35,17 @@ type LockError struct {
 }
 
 func (e *LockError) Error() string {
-	if e != nil && e.Status.Exists && !e.Status.Stale {
+	if e == nil {
+		return "Forest state is locked; wait and retry"
+	}
+	switch {
+	case !e.Status.Exists:
+		return "Forest state lock was removed concurrently; retry"
+	case e.Status.Stale:
+		return "Forest state lock is stale; retry or run forest doctor --fix if it persists"
+	default:
 		return "Forest state is locked by an active process; wait and retry"
 	}
-	if e != nil && e.Status.Stale {
-		return "Forest state lock is stale; retry or run forest doctor --fix if it persists"
-	}
-	return "Forest state is locked; wait and retry"
 }
 
 func WithLock(root, command string, fn func() error) error {
@@ -84,12 +89,16 @@ func InspectLock(root string) (LockStatus, error) {
 	if err != nil {
 		return LockStatus{}, err
 	}
+	return inspectLockData(data), nil
+}
+
+func inspectLockData(data []byte) LockStatus {
 	var lock Lock
 	if err := json.Unmarshal(data, &lock); err != nil {
-		return LockStatus{Exists: true, Stale: true, Reason: "malformed lock file"}, nil
+		return LockStatus{Exists: true, Stale: true, Reason: "malformed lock file"}
 	}
 	if lock.PID <= 0 {
-		return LockStatus{Exists: true, Stale: true, Reason: "missing process id", Lock: lock}, nil
+		return LockStatus{Exists: true, Stale: true, Reason: "missing process id", Lock: lock}
 	}
 	reasonPrefix := ""
 	host, hostErr := os.Hostname()
@@ -98,39 +107,40 @@ func InspectLock(root string) (LockStatus, error) {
 	}
 	if lock.Hostname != "" {
 		if hostErr != nil || host == "" {
-			return LockStatus{Exists: true, Reason: reasonPrefix + "held by host " + lock.Hostname, Lock: lock}, nil
+			return LockStatus{Exists: true, Reason: reasonPrefix + "held by host " + lock.Hostname, Lock: lock}
 		}
 		if !strings.EqualFold(lock.Hostname, host) {
-			return LockStatus{Exists: true, Reason: "held by another host", Lock: lock}, nil
+			return LockStatus{Exists: true, Reason: "held by another host", Lock: lock}
 		}
 	}
 	if !processRunning(lock.PID) {
-		return LockStatus{Exists: true, Stale: true, Reason: fmt.Sprintf("%sprocess %d is not running", reasonPrefix, lock.PID), Lock: lock}, nil
+		return LockStatus{Exists: true, Stale: true, Reason: fmt.Sprintf("%sprocess %d is not running", reasonPrefix, lock.PID), Lock: lock}
 	}
-	return LockStatus{Exists: true, Reason: fmt.Sprintf("%sheld by process %d", reasonPrefix, lock.PID), Lock: lock}, nil
+	return LockStatus{Exists: true, Reason: fmt.Sprintf("%sheld by process %d", reasonPrefix, lock.PID), Lock: lock}
 }
 
 func acquire(root, command string) (func(), error) {
-	unlock, err := tryAcquire(root, command)
-	if err == nil {
-		return unlock, nil
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		unlock, err := tryAcquire(root, command)
+		if err == nil {
+			return unlock, nil
+		}
+		lastErr = err
+		var lockErr *LockError
+		if !errors.As(err, &lockErr) || !lockErr.Status.Stale {
+			return nil, err
+		}
+		status, cleared, clearErr := ClearStaleLock(root)
+		if clearErr != nil {
+			return nil, fmt.Errorf("stale Forest state lock detected but recovery failed: %w", clearErr)
+		}
+		if status.Exists && !cleared {
+			return nil, &LockError{Status: status}
+		}
 	}
-	var lockErr *LockError
-	if !errors.As(err, &lockErr) || !lockErr.Status.Stale {
-		return nil, err
-	}
-
-	status, cleared, clearErr := ClearStaleLock(root)
-	if clearErr != nil {
-		return nil, clearErr
-	}
-	if !status.Exists {
-		return tryAcquire(root, command)
-	}
-	if !cleared {
-		return nil, &LockError{Status: status}
-	}
-	return tryAcquire(root, command)
+	return nil, lastErr
 }
 
 func tryAcquire(root, command string) (func(), error) {
@@ -176,12 +186,31 @@ func ClearStaleLock(root string) (LockStatus, bool, error) {
 	// A peer process may observe a lock between file creation and payload write.
 	// Re-check before clearing so fresh locks are not mistaken for stale ones.
 	time.Sleep(100 * time.Millisecond)
-	status, err := InspectLock(root)
+	data, err := os.ReadFile(lockPath(root))
+	if os.IsNotExist(err) {
+		return LockStatus{Reason: "missing"}, false, nil
+	}
 	if err != nil {
 		return LockStatus{}, false, err
 	}
-	if !status.Exists || !status.Stale {
+	status := inspectLockData(data)
+	if !status.Stale {
 		return status, false, nil
+	}
+	// Re-read immediately before removal and only delete when the contents
+	// still match the stale payload that was inspected. A peer that replaced
+	// the lock in the meantime keeps its lock and its fresh status is
+	// reported instead. This narrows (but cannot fully close) the
+	// inspect-then-remove race inherent to file-based advisory locks.
+	current, err := os.ReadFile(lockPath(root))
+	if os.IsNotExist(err) {
+		return LockStatus{Reason: "missing"}, false, nil
+	}
+	if err != nil {
+		return status, false, err
+	}
+	if !bytes.Equal(current, data) {
+		return inspectLockData(current), false, nil
 	}
 	if err := ClearLock(root); err != nil {
 		return status, false, err

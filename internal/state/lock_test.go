@@ -155,3 +155,38 @@ func localHost(t *testing.T) string {
 	}
 	return host
 }
+
+func TestLockErrorMessageWhenLockRemovedConcurrently(t *testing.T) {
+	err := &LockError{Status: LockStatus{Exists: false}}
+	if !strings.Contains(err.Error(), "removed concurrently") {
+		t.Fatalf("expected concurrent-removal message, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "doctor --fix") {
+		t.Fatalf("removed lock should not suggest doctor --fix: %s", err.Error())
+	}
+}
+
+func TestWithLockRecoversWhenStaleLockVanishesBeforeClear(t *testing.T) {
+	root := t.TempDir()
+	writeLock(t, root, Lock{PID: 99999999, Hostname: localHost(t), Command: "forest old", CreatedAt: time.Now().UTC()})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(20 * time.Millisecond)
+		_ = os.Remove(lockPath(root))
+	}()
+
+	called := false
+	err := WithLock(root, "forest test", func() error {
+		called = true
+		return nil
+	})
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected callback to run after lock vanished")
+	}
+}
