@@ -4,6 +4,8 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+## v0.3.0 - 2026-07-07
+
 - `forest list` and `forest status` run their per-worktree git checks concurrently, cutting dashboard latency on repos with several worktrees.
 - New `--fast` flag on `forest list` and `forest status` skips git checks entirely for instant state-only output, marked with `checksSkipped` in JSON.
 
