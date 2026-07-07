@@ -38,9 +38,12 @@ func errorPayload(err error) errorOutput {
 	if errors.As(err, &lockErr) {
 		status := lockErr.Status
 		payload.Lock = &status
-		if status.Stale {
+		switch {
+		case !status.Exists:
+			payload.SuggestedAction = "retry; the lock was removed concurrently"
+		case status.Stale:
 			payload.SuggestedAction = "retry; Forest can clear stale same-host locks, or run forest doctor --fix if the lock persists"
-		} else {
+		default:
 			payload.SuggestedAction = "wait for the active Forest process to finish, then retry"
 		}
 	}

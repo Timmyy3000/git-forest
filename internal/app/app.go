@@ -470,7 +470,7 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			checks = append(checks, Check{Name: "VS Code ignores", Status: "missing"})
 		}
 	}
-	if fix {
+	repairCopyDefaults := func() {
 		changed, err := config.RepairLegacyCopyDefault(root)
 		if err != nil {
 			checks = append(checks, Check{Name: "copy defaults", Status: "invalid: " + err.Error()})
@@ -573,11 +573,22 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		return nil
 	}
 	if fix && canMutate {
-		if err := state.WithLock(root, "forest doctor --fix", validateState); err != nil {
+		// Config repair mutates .forest/config.toml, so it runs under the
+		// state lock alongside the other fix-mode mutations.
+		err := state.WithLock(root, "forest doctor --fix", func() error {
+			repairCopyDefaults()
+			return validateState()
+		})
+		if err != nil {
 			return DoctorResult{}, err
 		}
-	} else if err := validateState(); err != nil {
-		return DoctorResult{}, err
+	} else {
+		if fix {
+			checks = append(checks, Check{Name: "copy defaults", Status: "skipped: state is locked"})
+		}
+		if err := validateState(); err != nil {
+			return DoctorResult{}, err
+		}
 	}
 	return DoctorResult{Checks: checks}, nil
 }

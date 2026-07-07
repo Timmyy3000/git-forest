@@ -62,7 +62,7 @@ func WithLock(root, command string, fn func() error) error {
 func cleanupLockOnSignal(unlock func()) func() {
 	signals := []os.Signal{os.Interrupt}
 	if runtime.GOOS != "windows" {
-		signals = append(signals, syscall.SIGTERM)
+		signals = append(signals, syscall.SIGTERM, syscall.SIGHUP)
 	}
 	ch := make(chan os.Signal, 1)
 	done := make(chan struct{})
