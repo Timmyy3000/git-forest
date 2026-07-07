@@ -185,6 +185,10 @@ func ClearLock(root string) error {
 }
 
 func ClearStaleLock(root string) (LockStatus, bool, error) {
+	// Fast path: no lock file, nothing to clear.
+	if _, err := os.Stat(lockPath(root)); os.IsNotExist(err) {
+		return LockStatus{Reason: "missing"}, false, nil
+	}
 	// A peer process may observe a lock between file creation and payload write.
 	// Re-check before clearing so fresh locks are not mistaken for stale ones.
 	time.Sleep(100 * time.Millisecond)
