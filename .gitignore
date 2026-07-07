@@ -3,3 +3,5 @@ internals/
 forest
 forest.exe
 .agent
+
+.forest/

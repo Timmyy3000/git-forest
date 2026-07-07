@@ -1,0 +1,8 @@
+{
+  "files.watcherExclude": {
+    "**/.forest/worktrees/**": true
+  },
+  "search.exclude": {
+    "**/.forest/worktrees/**": true
+  }
+}
