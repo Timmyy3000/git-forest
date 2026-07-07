@@ -14,7 +14,9 @@ func Execute() error {
 	root := newRootCommand(app.New())
 	if err := root.Execute(); err != nil {
 		if outputJSON {
-			_ = writeJSON(os.Stdout, errorPayload(err))
+			if writeErr := writeJSON(os.Stdout, errorPayload(err)); writeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error writing JSON error output: %s\n", writeErr)
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		}

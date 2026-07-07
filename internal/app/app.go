@@ -171,6 +171,10 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			}
 		}
 		branchExists := git.BranchExists(ctx, root, mapping.Branch)
+		cfg, err := config.Load(root)
+		if err != nil {
+			return err
+		}
 		if err := git.WorktreeAdd(ctx, root, absPath, mapping.Branch, base, branchExists); err != nil {
 			return err
 		}
@@ -195,7 +199,6 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "creating", ID: mapping.Identity})
-		cfg, _ := config.Load(root)
 		copied, warnings := config.CopyReusable(root, absPath, cfg)
 		worktree.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
 		if _, idx, ok := store.Find(mapping.Identity); ok {
@@ -594,7 +597,7 @@ func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *sta
 		identity := filepath.ToSlash(identityRel)
 		branch := wt.Branch
 		if branch == "" {
-			branch = identity
+			continue
 		}
 		if _, _, ok := store.Find(identity); ok {
 			continue
