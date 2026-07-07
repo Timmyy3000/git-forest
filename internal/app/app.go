@@ -20,8 +20,8 @@ type App struct{}
 func New() *App { return &App{} }
 
 type InitResult struct {
-	ForestDir string
-	Warnings  []string
+	ForestDir string   `json:"forestDir"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 type AddOptions struct {
@@ -34,11 +34,11 @@ type AddOptions struct {
 }
 
 type AddResult struct {
-	Name     string
-	Branch   string
-	Path     string
-	Copied   []string
-	Warnings []string
+	Name     string   `json:"name"`
+	Branch   string   `json:"branch"`
+	Path     string   `json:"path"`
+	Copied   []string `json:"copied,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type ListOptions struct {
@@ -48,21 +48,23 @@ type ListOptions struct {
 }
 
 type WorktreeView struct {
-	Name        string
-	Branch      string
-	Path        string
-	Agent       string
-	Phase       string
-	Note        string
-	Updated     time.Time
-	Dirty       bool
-	Ahead       int
-	Behind      int
-	Integration string
-	Next        string
+	Name        string    `json:"name"`
+	Branch      string    `json:"branch"`
+	Path        string    `json:"path"`
+	Agent       string    `json:"agent,omitempty"`
+	Phase       string    `json:"phase,omitempty"`
+	Note        string    `json:"note,omitempty"`
+	Updated     time.Time `json:"updated"`
+	Dirty       bool      `json:"dirty"`
+	Ahead       int       `json:"ahead"`
+	Behind      int       `json:"behind"`
+	Integration string    `json:"integration"`
+	Next        string    `json:"next"`
 }
 
-type ListResult struct{ Worktrees []WorktreeView }
+type ListResult struct {
+	Worktrees []WorktreeView `json:"worktrees"`
+}
 
 type MarkOptions struct {
 	Name  string
@@ -76,8 +78,8 @@ type MarkOptions struct {
 }
 
 type MarkResult struct {
-	Name  string
-	Phase string
+	Name  string `json:"name"`
+	Phase string `json:"phase"`
 }
 
 type CloseOptions struct {
@@ -90,19 +92,21 @@ type CloseOptions struct {
 }
 
 type CloseResult struct {
-	Closed  []string
-	Skipped []Skipped
+	Closed  []string  `json:"closed"`
+	Skipped []Skipped `json:"skipped"`
 }
 
 type Skipped struct {
-	Name   string
-	Reason string
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
-type DoctorResult struct{ Checks []Check }
+type DoctorResult struct {
+	Checks []Check `json:"checks"`
+}
 type Check struct {
-	Name   string
-	Status string
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 func (a *App) Init(ctx context.Context) (InitResult, error) {
@@ -167,17 +171,19 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			}
 		}
 		branchExists := git.BranchExists(ctx, root, mapping.Branch)
+		cfg, err := config.Load(root)
+		if err != nil {
+			return err
+		}
 		if err := git.WorktreeAdd(ctx, root, absPath, mapping.Branch, base, branchExists); err != nil {
 			return err
 		}
-		cfg, _ := config.Load(root)
-		copied, warnings := config.CopyReusable(root, absPath, cfg)
 		now := time.Now().UTC()
 		actor := state.Actor{Kind: "human"}
 		if opts.Agent != "" {
 			actor = state.Actor{Kind: "agent", Name: opts.Agent}
 		}
-		store.Worktrees = append(store.Worktrees, state.Worktree{
+		worktree := state.Worktree{
 			ID:        mapping.Identity,
 			Name:      mapping.Identity,
 			Branch:    mapping.Branch,
@@ -186,12 +192,22 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			CreatedAt: now,
 			CreatedBy: actor,
 			Activity:  state.Activity{Phase: "claimed", Agent: opts.Agent, LastSeenAt: now},
-			Status:    state.Status{LastKnown: "active", LastCheckedAt: now},
-		})
+			Status:    state.Status{LastKnown: "creating", LastCheckedAt: now},
+		}
+		store.Worktrees = append(store.Worktrees, worktree)
 		if err := state.Save(root, store); err != nil {
 			return err
 		}
-		_ = state.AppendEvent(root, state.Event{Time: now, Type: "created", ID: mapping.Identity})
+		_ = state.AppendEvent(root, state.Event{Time: now, Type: "creating", ID: mapping.Identity})
+		copied, warnings := config.CopyReusable(root, absPath, cfg)
+		worktree.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
+		if _, idx, ok := store.Find(mapping.Identity); ok {
+			store.Worktrees[idx] = worktree
+		}
+		if err := state.Save(root, store); err != nil {
+			return err
+		}
+		_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "created", ID: mapping.Identity})
 		result = AddResult{Name: mapping.Identity, Branch: mapping.Branch, Path: absPath, Copied: copied, Warnings: warnings}
 		return nil
 	})
@@ -454,6 +470,16 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			checks = append(checks, Check{Name: "VS Code ignores", Status: "missing"})
 		}
 	}
+	repairCopyDefaults := func() {
+		changed, err := config.RepairLegacyCopyDefault(root)
+		if err != nil {
+			checks = append(checks, Check{Name: "copy defaults", Status: "invalid: " + err.Error()})
+		} else if changed {
+			checks = append(checks, Check{Name: "copy defaults", Status: "updated"})
+		} else {
+			checks = append(checks, Check{Name: "copy defaults", Status: "ok"})
+		}
+	}
 	canMutate := true
 	lockStatus, err := state.InspectLock(root)
 	if err != nil {
@@ -464,10 +490,19 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	} else if lockStatus.Stale {
 		checks = append(checks, Check{Name: "state lock", Status: "stale: " + lockStatus.Reason})
 		if fix {
-			if err := state.ClearLock(root); err != nil {
+			latest, cleared, err := state.ClearStaleLock(root)
+			if err != nil {
 				return DoctorResult{}, err
 			}
-			checks = append(checks, Check{Name: "state lock cleanup", Status: "cleared"})
+			switch {
+			case cleared:
+				checks = append(checks, Check{Name: "state lock cleanup", Status: "cleared"})
+			case !latest.Exists:
+				checks = append(checks, Check{Name: "state lock cleanup", Status: "already clear"})
+			default:
+				checks = append(checks, Check{Name: "state lock cleanup", Status: "skipped: " + latest.Reason})
+				canMutate = false
+			}
 		} else {
 			canMutate = false
 		}
@@ -482,8 +517,20 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			return nil
 		}
 		checks = append(checks, Check{Name: "state file", Status: "ok"})
+		adopted, untracked, reconcileErr := a.reconcileGitWorktrees(ctx, root, &store, fix && canMutate)
+		if reconcileErr != nil {
+			checks = append(checks, Check{Name: "git worktrees", Status: "invalid: " + reconcileErr.Error()})
+			canMutate = false
+		}
+		for _, id := range untracked {
+			checks = append(checks, Check{Name: "worktree " + id, Status: "untracked by Forest state"})
+		}
+		if adopted > 0 {
+			checks = append(checks, Check{Name: "worktree adoption", Status: fmt.Sprintf("adopted %d git worktree(s)", adopted)})
+		}
 		var kept []state.Worktree
 		removed := 0
+		changed := adopted
 		for _, wt := range store.Worktrees {
 			keep := true
 			if !validStatePath(wt.Path) {
@@ -494,6 +541,13 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "missing: " + wt.Path})
 			} else if err != nil {
 				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: " + err.Error()})
+			} else if wt.Status.LastKnown == "creating" {
+				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "creating"})
+				if fix && canMutate {
+					wt.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
+					checks = append(checks, Check{Name: "worktree " + wt.ID + " status cleanup", Status: "marked active"})
+					changed++
+				}
 			}
 			if keep {
 				kept = append(kept, wt)
@@ -508,18 +562,96 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			}
 			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d invalid record(s)", removed)})
 		} else if removed == 0 {
+			if fix && canMutate && changed > 0 {
+				store.Worktrees = kept
+				if err := state.Save(root, store); err != nil {
+					return err
+				}
+			}
 			checks = append(checks, Check{Name: "state paths", Status: "ok"})
 		}
 		return nil
 	}
 	if fix && canMutate {
-		if err := state.WithLock(root, "forest doctor --fix", validateState); err != nil {
+		// Config repair mutates .forest/config.toml, so it runs under the
+		// state lock alongside the other fix-mode mutations.
+		err := state.WithLock(root, "forest doctor --fix", func() error {
+			repairCopyDefaults()
+			return validateState()
+		})
+		if err != nil {
 			return DoctorResult{}, err
 		}
-	} else if err := validateState(); err != nil {
-		return DoctorResult{}, err
+	} else {
+		if fix {
+			checks = append(checks, Check{Name: "copy defaults", Status: "skipped: state is locked"})
+		}
+		if err := validateState(); err != nil {
+			return DoctorResult{}, err
+		}
 	}
 	return DoctorResult{Checks: checks}, nil
+}
+
+func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []string, error) {
+	worktrees, err := git.Worktrees(ctx, root)
+	if err != nil {
+		return 0, nil, err
+	}
+	now := time.Now().UTC()
+	base := store.DefaultBase
+	if base == "" {
+		base = git.DefaultBranch(ctx, root)
+	}
+	var untracked []string
+	adopted := 0
+	for _, wt := range worktrees {
+		rel, err := filepath.Rel(root, wt.Path)
+		if err != nil {
+			continue
+		}
+		rel = filepath.Clean(rel)
+		if !validStatePath(rel) {
+			continue
+		}
+		identityRel, err := filepath.Rel(filepath.Clean(config.WorktreeDir), rel)
+		if err != nil || !filepath.IsLocal(identityRel) {
+			continue
+		}
+		identity := filepath.ToSlash(identityRel)
+		branch := wt.Branch
+		if branch == "" {
+			continue
+		}
+		if _, _, ok := store.Find(identity); ok {
+			continue
+		}
+		if _, _, ok := store.Find(branch); ok {
+			continue
+		}
+		untracked = append(untracked, identity)
+		if !adopt {
+			continue
+		}
+		store.Worktrees = append(store.Worktrees, state.Worktree{
+			ID:        identity,
+			Name:      identity,
+			Branch:    branch,
+			Path:      rel,
+			Base:      base,
+			CreatedAt: now,
+			CreatedBy: state.Actor{Kind: "doctor"},
+			Activity: state.Activity{
+				Phase:      "adopted",
+				Note:       "adopted by forest doctor --fix",
+				LastSeenAt: now,
+			},
+			Status: state.Status{LastKnown: "active", LastCheckedAt: now},
+		})
+		_ = state.AppendEvent(root, state.Event{Time: now, Type: "adopted", ID: identity})
+		adopted++
+	}
+	return adopted, untracked, nil
 }
 
 func validStatePath(path string) bool {

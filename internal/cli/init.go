@@ -18,6 +18,9 @@ func newInitCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, result)
+			}
 			if quiet {
 				fmt.Fprintln(cmd.OutOrStdout(), result.ForestDir)
 				for _, warning := range result.Warnings {

@@ -19,8 +19,10 @@ type Config struct {
 	Copy []string
 }
 
+var legacyDefaultCopy = []string{".env", ".env.local", ".claude", ".cursor", ".agent", "skills"}
+
 func Default() Config {
-	return Config{Copy: []string{".env", ".env.local", ".claude", ".cursor", ".agent", "skills"}}
+	return Config{Copy: []string{".env", ".env.local"}}
 }
 
 func Ensure(root string) error {
@@ -42,7 +44,7 @@ func ensureConfig(root string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return os.WriteFile(path, []byte("[add]\ncopy = [\".env\", \".env.local\", \".claude\", \".cursor\", \".agent\", \"skills\"]\n"), 0o644)
+	return os.WriteFile(path, []byte("[add]\ncopy = [\".env\", \".env.local\"]\n"), 0o644)
 }
 
 func Load(root string) (Config, error) {
@@ -62,17 +64,90 @@ func Load(root string) (Config, error) {
 	return cfg, nil
 }
 
+func RepairLegacyCopyDefault(root string) (bool, error) {
+	path := filepath.Join(root, ConfigPath)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	lines := strings.Split(string(data), "\n")
+	assignment, ok := findCopyAssignment(lines)
+	if !ok || !equalStrings(parseStringList(assignment.value), legacyDefaultCopy) {
+		return false, nil
+	}
+	// Replace only the copy assignment so comments and other keys survive.
+	updated := make([]string, 0, len(lines))
+	updated = append(updated, lines[:assignment.start]...)
+	updated = append(updated, `copy = [".env", ".env.local"]`)
+	updated = append(updated, lines[assignment.end+1:]...)
+	return true, os.WriteFile(path, []byte(strings.Join(updated, "\n")), 0o644)
+}
+
 func parseCopyList(data string) []string {
-	idx := strings.Index(data, "copy")
-	if idx == -1 {
+	assignment, ok := findCopyAssignment(strings.Split(data, "\n"))
+	if !ok {
 		return nil
 	}
-	start := strings.Index(data[idx:], "[")
-	end := strings.Index(data[idx:], "]")
+	return parseStringList(assignment.value)
+}
+
+// copyAssignment records where a copy key's assignment lives (inclusive line
+// indexes, covering multi-line arrays) and its accumulated raw value.
+type copyAssignment struct {
+	start, end int
+	value      string
+}
+
+// findCopyAssignment locates the copy key Forest honors: the one in the [add]
+// section, falling back to a bare top-level copy key only when no [add] copy
+// exists. Keys in other sections are ignored.
+func findCopyAssignment(lines []string) (copyAssignment, bool) {
+	section := ""
+	var bare copyAssignment
+	bareFound := false
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(stripTOMLComment(lines[i]))
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(strings.Trim(line, "[]"))
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "copy" {
+			continue
+		}
+		if section != "" && section != "add" {
+			continue
+		}
+		start := i
+		for !strings.Contains(value, "]") && i+1 < len(lines) {
+			i++
+			value += "\n" + stripTOMLComment(lines[i])
+		}
+		assignment := copyAssignment{start: start, end: i, value: value}
+		if section == "add" {
+			return assignment, true
+		}
+		if !bareFound {
+			bare = assignment
+			bareFound = true
+		}
+	}
+	return bare, bareFound
+}
+
+func parseStringList(value string) []string {
+	start := strings.Index(value, "[")
+	end := strings.LastIndex(value, "]")
 	if start == -1 || end == -1 || end <= start {
 		return nil
 	}
-	body := data[idx+start+1 : idx+end]
+	body := value[start+1 : end]
 	var values []string
 	for _, raw := range strings.Split(body, ",") {
 		value := strings.Trim(strings.TrimSpace(raw), "\"'")
@@ -81,6 +156,39 @@ func parseCopyList(data string) []string {
 		}
 	}
 	return values
+}
+
+func stripTOMLComment(line string) string {
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for idx, r := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && inDouble:
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case r == '#' && !inSingle && !inDouble:
+			return line[:idx]
+		}
+	}
+	return line
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func EnsureGitignore(root string) error {
@@ -123,7 +231,7 @@ func CopyReusable(root, worktree string, cfg Config) (copied, warnings []string)
 			warnings = append(warnings, fmt.Sprintf("missing reusable path %s", entry))
 			continue
 		}
-		if err := copyPath(src, dst); err != nil {
+		if err := copyPath(entry, src, dst); err != nil {
 			warnings = append(warnings, fmt.Sprintf("copy %s failed: %v", entry, err))
 			continue
 		}

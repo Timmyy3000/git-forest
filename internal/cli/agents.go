@@ -21,6 +21,13 @@ func newAgentsCommand() *cobra.Command {
 		Short: "Print Forest instructions for coding agents",
 		Long:  "Print embedded Forest instructions for coding agents. Use --url to print only the canonical online guide URL.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if outputJSON {
+				value := map[string]string{"url": AgentGuideURL}
+				if !urlOnly {
+					value["guide"] = agentGuide
+				}
+				return printJSON(cmd, value)
+			}
 			if urlOnly {
 				fmt.Fprintln(cmd.OutOrStdout(), AgentGuideURL)
 				return nil

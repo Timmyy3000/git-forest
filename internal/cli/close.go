@@ -30,6 +30,9 @@ func newCloseCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, result)
+			}
 			for _, closed := range result.Closed {
 				fmt.Fprintf(cmd.OutOrStdout(), "Closed %s\n", closed)
 			}

@@ -12,17 +12,30 @@ import (
 
 func Execute() error {
 	root := newRootCommand(app.New())
-	return root.Execute()
+	if err := root.Execute(); err != nil {
+		if outputJSON {
+			if writeErr := writeJSON(os.Stdout, errorPayload(err)); writeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error: %s (JSON write failed: %s)\n", err, writeErr)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		}
+		return err
+	}
+	return nil
 }
 
 func newRootCommand(application *app.App) *cobra.Command {
 	root := &cobra.Command{
-		Use:     "forest",
-		Short:   "Manage repo-local Git worktrees for parallel agent work",
-		Long:    fmt.Sprintf("Forest keeps parallel worktrees visible under .forest/worktrees and tracks agent activity in .forest/state.\n\nAgent guide: %s", AgentGuideURL),
-		Version: buildinfo.Version,
+		Use:           "forest",
+		Short:         "Manage repo-local Git worktrees for parallel agent work",
+		Long:          fmt.Sprintf("Forest keeps parallel worktrees visible under .forest/worktrees and tracks agent activity in .forest/state.\n\nAgent guide: %s", AgentGuideURL),
+		Version:       buildinfo.Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("forest {{.Version}}\n")
+	root.PersistentFlags().BoolVar(&outputJSON, "json", false, "print machine-readable JSON")
 
 	root.AddCommand(newInitCommand(application))
 	root.AddCommand(newAddCommand(application))

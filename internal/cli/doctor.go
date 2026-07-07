@@ -18,6 +18,9 @@ func newDoctorCommand(application *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if outputJSON {
+				return printJSON(cmd, result)
+			}
 			for _, check := range result.Checks {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", check.Name, check.Status)
 			}

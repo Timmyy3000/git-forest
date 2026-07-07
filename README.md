@@ -46,7 +46,11 @@ repo/
 - Detects merged and patch-equivalent branches
 - Removes merged or selected worktrees with `forest close`
 - Configures VS Code search and file watcher ignores so `.forest/worktrees` stays visible without being indexed
-- Repairs common state and lock issues with `forest doctor --fix`
+- Prints machine-readable output from every command with `--json`
+- Automatically recovers stale same-host state locks before mutating state
+- Keeps default reusable file copying small, and skips nested Claude worktrees when `.claude` is explicitly copied
+- Adopts Git-known `.forest/worktrees/*` entries with `forest doctor --fix` if state was lost mid-add
+- Repairs common state and setup issues with `forest doctor --fix`
 - Includes embedded coding-agent instructions with a link to `https://forest.timi.click/agents.md`
 
 ## Install
@@ -165,10 +169,10 @@ Forest creates `.forest/config.toml` with reusable paths that should be copied i
 
 ```toml
 [add]
-copy = [".env", ".env.local", ".claude", ".cursor", ".agent", "skills"]
+copy = [".env", ".env.local"]
 ```
 
-This is intended for agent workflows where every worktree needs the same repo standards, skills, or local environment files.
+This is intended for small local environment files. Larger agent state directories such as `.claude`, `.cursor`, `.agent`, or `skills` should be opt-in per repository after checking that they do not contain nested checkouts or large generated content. Forest always skips `.claude/worktrees/**` when `.claude` is explicitly copied. `forest doctor --fix` migrates only the exact old generated copy list to the safer default and leaves custom copy lists alone.
 
 ## Agent Workflow
 
@@ -178,7 +182,7 @@ Coding agents can discover the Forest workflow with:
 forest agents
 ```
 
-This works without web access. To print only the canonical online guide URL:
+Agents should run this at the start of every Forest session so they use the instructions that shipped with the installed CLI. This works without web access. To print only the canonical online guide URL:
 
 ```bash
 forest agents --url
