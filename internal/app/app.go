@@ -517,7 +517,11 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			return nil
 		}
 		checks = append(checks, Check{Name: "state file", Status: "ok"})
-		adopted, untracked := a.reconcileGitWorktrees(ctx, root, &store, fix && canMutate)
+		adopted, untracked, reconcileErr := a.reconcileGitWorktrees(ctx, root, &store, fix && canMutate)
+		if reconcileErr != nil {
+			checks = append(checks, Check{Name: "git worktrees", Status: "invalid: " + reconcileErr.Error()})
+			canMutate = false
+		}
 		for _, id := range untracked {
 			checks = append(checks, Check{Name: "worktree " + id, Status: "untracked by Forest state"})
 		}
@@ -569,10 +573,10 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	return DoctorResult{Checks: checks}, nil
 }
 
-func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []string) {
+func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []string, error) {
 	worktrees, err := git.Worktrees(ctx, root)
 	if err != nil {
-		return 0, nil
+		return 0, nil, err
 	}
 	now := time.Now().UTC()
 	base := store.DefaultBase
@@ -627,7 +631,7 @@ func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *sta
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "adopted", ID: identity})
 		adopted++
 	}
-	return adopted, untracked
+	return adopted, untracked, nil
 }
 
 func validStatePath(path string) bool {

@@ -95,6 +95,16 @@ func TestDoctorFixAdoptsGitWorktreeMissingFromState(t *testing.T) {
 	}
 }
 
+func TestReconcileGitWorktreesReturnsGitErrors(t *testing.T) {
+	root := t.TempDir()
+	store := state.NewStore(root)
+
+	_, _, err := New().reconcileGitWorktrees(context.Background(), root, &store, false)
+	if err == nil {
+		t.Fatal("expected git worktree list error outside a repository")
+	}
+}
+
 func hasCheck(result DoctorResult, name, status string) bool {
 	for _, check := range result.Checks {
 		if check.Name == name && check.Status == status {
