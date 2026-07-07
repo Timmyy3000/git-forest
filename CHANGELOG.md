@@ -4,6 +4,9 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+- `forest list` and `forest status` run their per-worktree git checks concurrently, cutting dashboard latency on repos with several worktrees.
+- New `--fast` flag on `forest list` and `forest status` skips git checks entirely for instant state-only output, marked with `checksSkipped` in JSON.
+
 ## v0.2.0 - 2026-07-07
 
 - Automatic stale same-host lock recovery before mutating state, with lock cleanup on SIGINT/SIGTERM/SIGHUP.

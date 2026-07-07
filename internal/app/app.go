@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Timmyy3000/git-forest/internal/config"
@@ -45,6 +46,9 @@ type ListOptions struct {
 	Agent   string
 	Phase   string
 	Verbose bool
+	// Fast skips the per-worktree git checks (dirty, ahead/behind,
+	// integration) so output is instant; skipped views carry ChecksSkipped.
+	Fast bool
 }
 
 type WorktreeView struct {
@@ -60,6 +64,9 @@ type WorktreeView struct {
 	Behind      int       `json:"behind"`
 	Integration string    `json:"integration"`
 	Next        string    `json:"next"`
+	// ChecksSkipped marks that Dirty, Ahead, Behind, and Integration were
+	// not computed (--fast); their zero values carry no meaning.
+	ChecksSkipped bool `json:"checksSkipped,omitempty"`
 }
 
 type ListResult struct {
@@ -238,7 +245,7 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 	if err != nil {
 		return ListResult{}, err
 	}
-	var views []WorktreeView
+	var selected []state.Worktree
 	for _, wt := range store.Worktrees {
 		if opts.Agent != "" && wt.Activity.Agent != opts.Agent {
 			continue
@@ -246,27 +253,70 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 		if opts.Phase != "" && wt.Activity.Phase != opts.Phase {
 			continue
 		}
-		abs := filepath.Join(root, wt.Path)
-		dirty := git.IsDirty(ctx, abs)
-		ahead, behind := git.AheadBehind(ctx, abs, wt.Base)
-		integration := git.Integrated(ctx, abs, wt.Base)
-		view := WorktreeView{
-			Name:        wt.Name,
-			Branch:      wt.Branch,
-			Path:        abs,
-			Agent:       wt.Activity.Agent,
-			Phase:       wt.Activity.Phase,
-			Note:        wt.Activity.Note,
-			Updated:     wt.Activity.LastSeenAt,
-			Dirty:       dirty,
-			Ahead:       ahead,
-			Behind:      behind,
-			Integration: integration,
-			Next:        nextAction(dirty, integration, wt.Activity.Phase),
-		}
-		views = append(views, view)
+		selected = append(selected, wt)
 	}
+	views := make([]WorktreeView, len(selected))
+	var wg sync.WaitGroup
+	for i, wt := range selected {
+		view := WorktreeView{
+			Name:    wt.Name,
+			Branch:  wt.Branch,
+			Path:    filepath.Join(root, wt.Path),
+			Agent:   wt.Activity.Agent,
+			Phase:   wt.Activity.Phase,
+			Note:    wt.Activity.Note,
+			Updated: wt.Activity.LastSeenAt,
+		}
+		if opts.Fast {
+			view.ChecksSkipped = true
+			view.Integration = "unknown"
+			views[i] = view
+			continue
+		}
+		wg.Add(1)
+		go func(i int, view WorktreeView, base, phase string) {
+			defer wg.Done()
+			checks := collectGitChecks(ctx, view.Path, base)
+			view.Dirty = checks.dirty
+			view.Ahead = checks.ahead
+			view.Behind = checks.behind
+			view.Integration = checks.integration
+			view.Next = nextAction(checks.dirty, checks.integration, phase)
+			views[i] = view
+		}(i, view, wt.Base, wt.Activity.Phase)
+	}
+	wg.Wait()
 	return ListResult{Worktrees: views}, nil
+}
+
+// gitCheckSlots bounds concurrent git subprocesses across all worktree
+// checks; spawning git is the dominant cost, especially on Windows.
+var gitCheckSlots = make(chan struct{}, 8)
+
+type gitChecks struct {
+	dirty         bool
+	ahead, behind int
+	integration   string
+}
+
+// collectGitChecks runs the three per-worktree git checks concurrently.
+func collectGitChecks(ctx context.Context, path, base string) gitChecks {
+	var checks gitChecks
+	var wg sync.WaitGroup
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			gitCheckSlots <- struct{}{}
+			defer func() { <-gitCheckSlots }()
+			fn()
+		}()
+	}
+	run(func() { checks.dirty = git.IsDirty(ctx, path) })
+	run(func() { checks.ahead, checks.behind = git.AheadBehind(ctx, path, base) })
+	run(func() { checks.integration = git.Integrated(ctx, path, base) })
+	wg.Wait()
+	return checks
 }
 
 func nextAction(dirty bool, integration, phase string) string {

@@ -155,6 +155,7 @@ forest close --merged --yes
 | `forest add -b <branch>` | Create or attach a worktree using the branch as the identity |
 | `forest list` | Show active worktrees and agent activity |
 | `forest status` | Show a dashboard summary |
+| `forest list --fast` / `forest status --fast` | Instant state-only output, skipping git checks |
 | `forest mark` | Update phase, agent, note, and last-seen activity |
 | `forest path` | Print a managed worktree path |
 | `forest close` | Remove a selected worktree |

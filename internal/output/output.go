@@ -23,13 +23,21 @@ func RenderList(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(tw, "NAME\tAGENT\tPHASE\tGIT\tINTEGRATION\tUPDATED\tNEXT")
 	for _, wt := range result.Worktrees {
 		gitState := "clean"
-		if wt.Dirty {
-			gitState = "dirty"
+		integration := styleIntegration(wt.Integration)
+		next := wt.Next
+		if wt.ChecksSkipped {
+			gitState = "-"
+			integration = "-"
+			next = "-"
+		} else {
+			if wt.Dirty {
+				gitState = "dirty"
+			}
+			if wt.Ahead > 0 || wt.Behind > 0 {
+				gitState = fmt.Sprintf("%s +%d -%d", gitState, wt.Ahead, wt.Behind)
+			}
 		}
-		if wt.Ahead > 0 || wt.Behind > 0 {
-			gitState = fmt.Sprintf("%s +%d -%d", gitState, wt.Ahead, wt.Behind)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), gitState, styleIntegration(wt.Integration), age(wt.Updated), wt.Next)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), gitState, integration, age(wt.Updated), next)
 	}
 	return tw.Flush()
 }
