@@ -120,16 +120,19 @@ func inspectLockData(data []byte) LockStatus {
 }
 
 func acquire(root, command string) (func(), error) {
-	const maxAttempts = 3
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	// Every successful stale-lock clear is followed by another tryAcquire;
+	// the bound only limits how many recovery cycles run under lock churn.
+	const maxRecoveries = 3
+	for recovery := 0; ; recovery++ {
 		unlock, err := tryAcquire(root, command)
 		if err == nil {
 			return unlock, nil
 		}
-		lastErr = err
 		var lockErr *LockError
 		if !errors.As(err, &lockErr) || !lockErr.Status.Stale {
+			return nil, err
+		}
+		if recovery == maxRecoveries {
 			return nil, err
 		}
 		status, cleared, clearErr := ClearStaleLock(root)
@@ -140,7 +143,6 @@ func acquire(root, command string) (func(), error) {
 			return nil, &LockError{Status: status}
 		}
 	}
-	return nil, lastErr
 }
 
 func tryAcquire(root, command string) (func(), error) {
