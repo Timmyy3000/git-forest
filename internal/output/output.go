@@ -44,11 +44,19 @@ func RenderList(w io.Writer, result app.ListResult) error {
 
 func RenderStatus(w io.Writer, result app.ListResult) error {
 	groups := map[string][]app.WorktreeView{}
+	checksSkipped := false
 	for _, wt := range result.Worktrees {
 		group := "Active"
 		switch {
 		case wt.Phase == "blocked":
 			group = "Blocked"
+		case wt.ChecksSkipped:
+			// Dirty and Next were not computed, so the git-based groups
+			// (Ready for review / Ready to close) cannot be determined.
+			checksSkipped = true
+			if wt.Phase == "" {
+				group = "Unknown activity"
+			}
 		case wt.Next == "close":
 			group = "Ready to close"
 		case wt.Dirty:
@@ -67,6 +75,9 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 		for _, wt := range items {
 			fmt.Fprintf(w, "  %s  %s  %s  %s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), wt.Note)
 		}
+	}
+	if checksSkipped {
+		fmt.Fprintln(w, warnStyle.Render("git checks skipped (--fast): review/close grouping unavailable"))
 	}
 	return nil
 }
