@@ -6,7 +6,7 @@
 
 Forest keeps worktrees visible inside the repository, tracks what each agent is doing, and helps close stale worktrees when branches are merged.
 
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+[Website](https://forest.timi.click) · [Agent Guide](https://forest.timi.click/agents.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -64,7 +64,7 @@ curl -fsSL https://forest.timi.click/install.sh | sh
 Install a pinned version:
 
 ```bash
-curl -fsSL https://forest.timi.click/install.sh | FOREST_VERSION=v0.1.0 sh
+curl -fsSL https://forest.timi.click/install.sh | FOREST_VERSION=v0.2.0 sh
 ```
 
 The installer downloads the matching GitHub release asset for your OS and architecture, verifies `checksums.txt` when `sha256sum` or `shasum` is available, and installs `forest` into `/usr/local/bin` or `~/.local/bin`. Set `FOREST_INSTALL_DIR` to choose a different directory.
@@ -188,6 +188,8 @@ Agents should run this at the start of every Forest session so they use the inst
 forest agents --url
 ```
 
+The canonical guide is published at [forest.timi.click/agents.md](https://forest.timi.click/agents.md) — point agents there (or paste it into an `AGENTS.md`/`CLAUDE.md`) when they cannot run the CLI.
+
 A typical agent flow:
 
 ```bash
@@ -217,8 +219,8 @@ go build ./cmd/forest
 Release artifacts are published when a `v*` tag is pushed:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The release workflow builds Linux, macOS, and Windows binaries for `amd64` and `arm64`, uploads archives, and publishes `checksums.txt`.
