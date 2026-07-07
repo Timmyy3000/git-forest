@@ -152,8 +152,13 @@ func WorktreeAdd(ctx context.Context, root, path, branch, base string, branchExi
 	return err
 }
 
-func WorktreeRemove(ctx context.Context, root, path string) error {
-	_, err := Run(ctx, root, "worktree", "remove", path)
+func WorktreeRemove(ctx context.Context, root, path string, force bool) error {
+	args := []string{"worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, path)
+	_, err := Run(ctx, root, args...)
 	return err
 }
 
