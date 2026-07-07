@@ -482,7 +482,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			if err := git.WorktreeRemove(ctx, root, abs, opts.IncludeDirty); err != nil {
+			if err := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty); err != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: err.Error()})
 				kept = append(kept, wt)
 				continue
