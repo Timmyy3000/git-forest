@@ -81,14 +81,27 @@ func RepairLegacyCopyDefault(root string) (bool, error) {
 }
 
 func parseCopyList(data string) []string {
-	for _, rawLine := range strings.Split(data, "\n") {
-		line := strings.TrimSpace(stripTOMLComment(rawLine))
-		if line == "" || strings.HasPrefix(line, "[") {
+	section := ""
+	lines := strings.Split(data, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(stripTOMLComment(lines[i]))
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(strings.Trim(line, "[]"))
 			continue
 		}
 		key, value, ok := strings.Cut(line, "=")
 		if !ok || strings.TrimSpace(key) != "copy" {
 			continue
+		}
+		if section != "" && section != "add" {
+			continue
+		}
+		for !strings.Contains(value, "]") && i+1 < len(lines) {
+			i++
+			value += "\n" + stripTOMLComment(lines[i])
 		}
 		return parseStringList(value)
 	}

@@ -143,3 +143,45 @@ func writeFile(t *testing.T, path, data string) {
 		t.Fatal(err)
 	}
 }
+
+func TestLoadParsesMultiLineCopyArray(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ConfigPath), "[add]\ncopy = [\n  \".env\", # keep secrets\n  \"skills\",\n]\n")
+
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".env", "skills"}
+	if !reflect.DeepEqual(cfg.Copy, want) {
+		t.Fatalf("config copy = %#v, want %#v", cfg.Copy, want)
+	}
+}
+
+func TestLoadIgnoresCopyKeyInOtherSections(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ConfigPath), "[other]\ncopy = [\"wrong\"]\n[add]\ncopy = [\".env\", \"skills\"]\n")
+
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".env", "skills"}
+	if !reflect.DeepEqual(cfg.Copy, want) {
+		t.Fatalf("config copy = %#v, want %#v", cfg.Copy, want)
+	}
+}
+
+func TestLoadAcceptsBareCopyKeyBeforeAnySection(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, ConfigPath), "copy = [\".env\"]\n")
+
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".env"}
+	if !reflect.DeepEqual(cfg.Copy, want) {
+		t.Fatalf("config copy = %#v, want %#v", cfg.Copy, want)
+	}
+}
