@@ -457,11 +457,13 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			return err
 		}
 		var kept []state.Worktree
+		matched := false
 		for _, wt := range store.Worktrees {
 			if !opts.Merged && wt.ID != opts.Name && wt.Name != opts.Name && wt.Branch != opts.Name {
 				kept = append(kept, wt)
 				continue
 			}
+			matched = true
 			abs := filepath.Join(root, wt.Path)
 			dirty := git.IsDirty(ctx, abs)
 			integrated := git.Integrated(ctx, abs, wt.Base)
@@ -480,7 +482,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			if err := git.WorktreeRemove(ctx, root, abs); err != nil {
+			if err := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty); err != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: err.Error()})
 				kept = append(kept, wt)
 				continue
@@ -490,6 +492,9 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			}
 			result.Closed = append(result.Closed, wt.Name)
 			_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
+		}
+		if !opts.Merged && !matched {
+			return fmt.Errorf("unknown worktree %s (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
 		}
 		store.Worktrees = kept
 		return state.Save(root, store)

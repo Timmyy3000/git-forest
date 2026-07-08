@@ -44,7 +44,7 @@ func newCloseCommand(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&opts.Merged, "merged", false, "close all safely integrated worktrees")
 	cmd.Flags().BoolVar(&opts.Yes, "yes", false, "execute without confirmation")
-	cmd.Flags().BoolVar(&opts.IncludeDirty, "include-dirty", false, "allow closing dirty worktrees")
+	cmd.Flags().BoolVar(&opts.IncludeDirty, "include-dirty", false, "allow closing dirty worktrees (removes with git worktree remove --force)")
 	cmd.Flags().BoolVar(&opts.IncludeUnmerged, "include-unmerged", false, "allow closing unmerged worktrees")
 	cmd.Flags().BoolVar(&opts.DeleteBranch, "delete-branch", false, "delete the branch after removing the worktree")
 	return cmd
