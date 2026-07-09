@@ -194,7 +194,15 @@ func AheadBehindWithError(ctx context.Context, root, base string) (int, int, err
 	if len(fields) != 2 {
 		return 0, 0, fmt.Errorf("parse ahead/behind count %q", out)
 	}
-	return atoi(fields[1]), atoi(fields[0]), nil
+	ahead, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse ahead count %q: %w", fields[1], err)
+	}
+	behind, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse behind count %q: %w", fields[0], err)
+	}
+	return ahead, behind, nil
 }
 
 // Diff returns the combined staged and unstaged patch relative to HEAD.
@@ -240,16 +248,6 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 	return "patch-equivalent", nil
 }
 
-// Integrated preserves the legacy string-only helper for callers that cannot
-// surface an inspection diagnostic. New dashboard code should use Integration.
-func Integrated(ctx context.Context, root, base string) string {
-	status, err := Integration(ctx, root, base)
-	if err != nil {
-		return "unknown"
-	}
-	return status
-}
-
 func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestor, descendant)
 	cmd.Dir = root
@@ -270,15 +268,4 @@ func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, e
 		return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %s", ancestor, descendant, msg)
 	}
 	return true, nil
-}
-
-func atoi(value string) int {
-	var n int
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return n
-		}
-		n = n*10 + int(r-'0')
-	}
-	return n
 }

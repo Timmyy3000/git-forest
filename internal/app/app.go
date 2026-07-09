@@ -306,6 +306,7 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 				defer wg.Done()
 				view.Integration, view.IntegrationError = collectIntegration(ctx, view.Path, base)
 				view.DetailsSkipped = true
+				view.ChecksIncomplete = view.IntegrationError != ""
 				views[i] = view
 			}(i, view, wt.Base)
 			continue

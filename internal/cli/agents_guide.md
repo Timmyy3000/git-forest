@@ -108,6 +108,8 @@ forest close --merged --yes --json
 
 Close only when the human instructs you to, or when the work is proven integrated. Dirty or unmerged worktrees are refused unless you pass `--include-dirty` or `--include-unmerged`; do not pass those without explicit human instruction.
 
+If Forest cannot inspect a worktree's integration state, `forest close` refuses to remove it even with the include flags. Run `forest doctor --fix` to reconcile a manually removed or otherwise invalid worktree record before trying again.
+
 Never delete `.forest/worktrees/*` directories or run `git worktree remove` manually. Always go through `forest close`.
 
 ## Lock And Repair Rules

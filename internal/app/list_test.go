@@ -95,6 +95,9 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	if wt.IntegrationError == "" {
 		t.Fatal("expected integration inspection diagnostic")
 	}
+	if !wt.ChecksIncomplete {
+		t.Fatal("expected failed integration-only check to be marked incomplete")
+	}
 }
 
 func TestStatusProvidesDetailedHealthAndNamedDiff(t *testing.T) {
@@ -154,6 +157,9 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 
 	if !checks.incomplete {
 		t.Fatal("expected cancelled checks to be marked incomplete")
+	}
+	if checks.dirty || checks.ahead != 0 || checks.behind != 0 {
+		t.Fatalf("cancelled checks should retain zero placeholders, got dirty=%t ahead=%d behind=%d", checks.dirty, checks.ahead, checks.behind)
 	}
 	if checks.integration != "unknown" {
 		t.Fatalf("integration = %q, want unknown", checks.integration)
