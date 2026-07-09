@@ -4,6 +4,12 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+## v0.4.0 - 2026-07-10
+
+- `forest list` now refreshes live local integration by default without running the full Git-health dashboard, substantially improving multi-worktree latency.
+- `forest status [name]` provides detailed clean/dirty and ahead/behind health, while `forest status <name> --diff` prints the named worktree's staged and unstaged patch.
+- Integration detection is patch-aware, and failed or cancelled Git inspection is surfaced explicitly instead of being reported as trusted status data.
+
 ## v0.3.0 - 2026-07-07
 
 - `forest list` and `forest status` run their per-worktree git checks concurrently, cutting dashboard latency on repos with several worktrees.
