@@ -158,8 +158,8 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 	if !checks.incomplete {
 		t.Fatal("expected cancelled checks to be marked incomplete")
 	}
-	if checks.dirty || checks.ahead != 0 || checks.behind != 0 {
-		t.Fatalf("cancelled checks should retain zero placeholders, got dirty=%t ahead=%d behind=%d", checks.dirty, checks.ahead, checks.behind)
+	if !checks.dirty || checks.ahead != -1 || checks.behind != -1 {
+		t.Fatalf("cancelled checks = dirty=%t ahead=%d behind=%d, want conservative sentinels", checks.dirty, checks.ahead, checks.behind)
 	}
 	if checks.integration != "unknown" {
 		t.Fatalf("integration = %q, want unknown", checks.integration)

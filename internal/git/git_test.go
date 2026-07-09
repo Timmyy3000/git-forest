@@ -76,6 +76,17 @@ func TestIntegrationReportsUnresolvedBase(t *testing.T) {
 	}
 }
 
+func TestIntegrationRejectsOptionLikeBase(t *testing.T) {
+	root := initRepo(t)
+	status, err := Integration(context.Background(), root, "--git-dir=outside")
+	if err == nil {
+		t.Fatal("expected an inspection error")
+	}
+	if status != "unknown" {
+		t.Fatalf("status = %q, want unknown", status)
+	}
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

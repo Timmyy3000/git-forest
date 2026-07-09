@@ -181,6 +181,9 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 		if base == "" {
 			base = git.DefaultBranch(ctx, root)
 		}
+		if err := git.ValidateRevision(base); err != nil {
+			return err
+		}
 		mapping, err := mapAdd(opts)
 		if err != nil {
 			return err
@@ -409,6 +412,12 @@ func collectGitChecks(ctx context.Context, path, base string) gitChecks {
 	run(func() { ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base) }, func(err error) { aheadErr = err })
 	run(func() { integration, integrateErr = git.Integration(ctx, path, base) }, func(err error) { integrateErr = err })
 	wg.Wait()
+	if dirtyErr != nil {
+		dirty = true
+	}
+	if aheadErr != nil {
+		ahead, behind = -1, -1
+	}
 	if integration == "" && integrateErr != nil {
 		integration = "unknown"
 	}

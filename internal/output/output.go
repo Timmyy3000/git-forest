@@ -36,6 +36,10 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tGIT\tINTEGRATION\tUPDATED\tNOTE")
 	for _, wt := range result.Worktrees {
+		integration := withIntegrationError(wt)
+		if wt.ChecksIncomplete && wt.IntegrationError == "" {
+			integration += " (partial)"
+		}
 		gitState := "-"
 		if wt.ChecksIncomplete {
 			gitState = "unknown"
@@ -55,7 +59,7 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 			}
 			note += wt.CheckError
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, gitState, styleIntegration(withIntegrationError(wt)), age(wt.Updated), dash(note))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, gitState, styleIntegration(integration), age(wt.Updated), dash(note))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

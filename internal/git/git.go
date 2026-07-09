@@ -169,6 +169,17 @@ func Fetch(ctx context.Context, root string) error {
 	return err
 }
 
+// ValidateRevision rejects values that Git could parse as command options.
+func ValidateRevision(value string) error {
+	if value == "" {
+		return fmt.Errorf("revision is required")
+	}
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("invalid revision %q: values beginning with '-' are not allowed", value)
+	}
+	return nil
+}
+
 func IsDirty(ctx context.Context, root string) bool {
 	dirty, err := Dirty(ctx, root)
 	return err != nil || dirty
@@ -215,6 +226,9 @@ func Diff(ctx context.Context, root string) (string, error) {
 // It avoids an ancestry walk for active branches by first asking Git whether
 // HEAD contains any non-patch-equivalent commits relative to base.
 func Integration(ctx context.Context, root, base string) (string, error) {
+	if err := ValidateRevision(base); err != nil {
+		return "unknown", err
+	}
 	info, err := os.Stat(root)
 	if err != nil {
 		return "unknown", fmt.Errorf("inspect worktree: %w", err)
