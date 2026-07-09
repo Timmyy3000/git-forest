@@ -152,6 +152,9 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 	cancel()
 	checks := <-checksCh
 
+	if !checks.incomplete {
+		t.Fatal("expected cancelled checks to be marked incomplete")
+	}
 	if checks.integration != "unknown" {
 		t.Fatalf("integration = %q, want unknown", checks.integration)
 	}

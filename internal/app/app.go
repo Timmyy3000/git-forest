@@ -46,7 +46,6 @@ type ListOptions struct {
 	Name     string
 	Agent    string
 	Phase    string
-	Verbose  bool
 	Detailed bool
 	// Fast skips the per-worktree git checks (dirty, ahead/behind,
 	// integration) so output is instant; skipped views carry ChecksSkipped.
@@ -77,7 +76,10 @@ type WorktreeView struct {
 	IntegrationError string `json:"integrationError,omitempty"`
 	// CheckError captures failures from detailed Git health checks.
 	CheckError string `json:"checkError,omitempty"`
-	Next       string `json:"next"`
+	// ChecksIncomplete marks detailed output with one or more unavailable Git
+	// checks. Dirty, Ahead, and Behind must not be trusted in that state.
+	ChecksIncomplete bool   `json:"checksIncomplete,omitempty"`
+	Next             string `json:"next"`
 	// ChecksSkipped marks that Dirty, Ahead, Behind, and Integration were
 	// not computed (--fast); their zero values carry no meaning.
 	ChecksSkipped bool `json:"checksSkipped,omitempty"`
@@ -318,6 +320,7 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 			view.Integration = checks.integration
 			view.IntegrationError = checks.integrationError
 			view.CheckError = checks.checkError
+			view.ChecksIncomplete = checks.incomplete
 			if checks.checkError == "" {
 				view.Next = nextAction(checks.dirty, checks.integration, phase)
 			}
@@ -369,6 +372,7 @@ type gitChecks struct {
 	integration      string
 	integrationError string
 	checkError       string
+	incomplete       bool
 }
 
 // collectGitChecks runs the three per-worktree git checks concurrently.
@@ -424,6 +428,7 @@ func collectGitChecks(ctx context.Context, path, base string) gitChecks {
 		integration:      integration,
 		integrationError: errorText(integrateErr),
 		checkError:       strings.Join(diagnostics, "; "),
+		incomplete:       len(diagnostics) > 0,
 	}
 }
 

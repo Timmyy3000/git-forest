@@ -25,7 +25,6 @@ func newListCommand(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "filter by agent")
 	cmd.Flags().StringVar(&opts.Phase, "phase", "", "filter by activity phase")
-	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show extra details")
 	cmd.Flags().BoolVar(&opts.Fast, "fast", false, "skip all git checks and show Forest metadata only")
 	return cmd
 }

@@ -37,7 +37,9 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(tw, "NAME\tGIT\tINTEGRATION\tUPDATED\tNOTE")
 	for _, wt := range result.Worktrees {
 		gitState := "-"
-		if !wt.ChecksSkipped {
+		if wt.ChecksIncomplete {
+			gitState = "unknown"
+		} else if !wt.ChecksSkipped {
 			gitState = "clean"
 			if wt.Dirty {
 				gitState = "dirty"
@@ -48,7 +50,10 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 		}
 		note := wt.Note
 		if wt.CheckError != "" {
-			note = wt.CheckError
+			if note != "" {
+				note += "; "
+			}
+			note += wt.CheckError
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, gitState, styleIntegration(withIntegrationError(wt)), age(wt.Updated), dash(note))
 	}
