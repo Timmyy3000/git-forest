@@ -318,7 +318,9 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 			view.Integration = checks.integration
 			view.IntegrationError = checks.integrationError
 			view.CheckError = checks.checkError
-			view.Next = nextAction(checks.dirty, checks.integration, phase)
+			if checks.checkError == "" {
+				view.Next = nextAction(checks.dirty, checks.integration, phase)
+			}
 			views[i] = view
 		}(i, view, wt.Base, wt.Activity.Phase)
 	}
@@ -384,23 +386,27 @@ func collectGitChecks(ctx context.Context, path, base string) gitChecks {
 		aheadErr     error
 		integrateErr error
 	)
-	run := func(fn func()) {
+	run := func(fn func(), cancelled func(error)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			select {
 			case gitCheckSlots <- struct{}{}:
 			case <-ctx.Done():
+				cancelled(ctx.Err())
 				return
 			}
 			defer func() { <-gitCheckSlots }()
 			fn()
 		}()
 	}
-	run(func() { dirty, dirtyErr = git.Dirty(ctx, path) })
-	run(func() { ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base) })
-	run(func() { integration, integrateErr = git.Integration(ctx, path, base) })
+	run(func() { dirty, dirtyErr = git.Dirty(ctx, path) }, func(err error) { dirtyErr = err })
+	run(func() { ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base) }, func(err error) { aheadErr = err })
+	run(func() { integration, integrateErr = git.Integration(ctx, path, base) }, func(err error) { integrateErr = err })
 	wg.Wait()
+	if integration == "" && integrateErr != nil {
+		integration = "unknown"
+	}
 	var diagnostics []string
 	if dirtyErr != nil {
 		diagnostics = append(diagnostics, "dirty: "+dirtyErr.Error())

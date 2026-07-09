@@ -134,6 +134,35 @@ func TestStatusDiffRequiresName(t *testing.T) {
 	}
 }
 
+func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	for range cap(gitCheckSlots) {
+		gitCheckSlots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for range cap(gitCheckSlots) {
+			<-gitCheckSlots
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	checksCh := make(chan gitChecks, 1)
+	go func() { checksCh <- collectGitChecks(ctx, root, "main") }()
+	cancel()
+	checks := <-checksCh
+
+	if checks.integration != "unknown" {
+		t.Fatalf("integration = %q, want unknown", checks.integration)
+	}
+	if !strings.Contains(checks.integrationError, context.Canceled.Error()) {
+		t.Fatalf("integration error = %q, want cancellation diagnostic", checks.integrationError)
+	}
+	if !strings.Contains(checks.checkError, context.Canceled.Error()) {
+		t.Fatalf("check error = %q, want cancellation diagnostic", checks.checkError)
+	}
+}
+
 func TestListFastSkipsGitChecks(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

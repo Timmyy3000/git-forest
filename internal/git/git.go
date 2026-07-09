@@ -182,6 +182,9 @@ func Dirty(ctx context.Context, root string) (bool, error) {
 	return out != "", nil
 }
 
+// AheadBehind preserves the legacy zero-on-error contract. New callers that
+// need to distinguish an unavailable check from a zero count should use
+// AheadBehindWithError.
 func AheadBehind(ctx context.Context, root, base string) (int, int) {
 	ahead, behind, _ := AheadBehindWithError(ctx, root, base)
 	return ahead, behind
