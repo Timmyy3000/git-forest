@@ -100,6 +100,32 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	}
 }
 
+func TestCloseReportsInaccessibleWorktree(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "missing", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(added.Path); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Name: "missing", Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("close result = %+v, want one inaccessible skipped worktree", result)
+	}
+	if !strings.HasPrefix(result.Skipped[0].Reason, "worktree inaccessible:") {
+		t.Fatalf("skip reason = %q, want inaccessible worktree diagnostic", result.Skipped[0].Reason)
+	}
+}
+
 func TestStatusProvidesDetailedHealthAndNamedDiff(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

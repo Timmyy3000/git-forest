@@ -595,7 +595,12 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			abs := filepath.Join(root, wt.Path)
-			dirty := git.IsDirty(ctx, abs)
+			dirty, dirtyErr := git.Dirty(ctx, abs)
+			if dirtyErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + dirtyErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
 			integrated, integrationErr := git.Integration(ctx, abs, wt.Base)
 			if dirty && !opts.IncludeDirty {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "dirty"})
