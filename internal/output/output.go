@@ -37,7 +37,7 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(tw, "NAME\tGIT\tINTEGRATION\tUPDATED\tNOTE")
 	for _, wt := range result.Worktrees {
 		integration := withIntegrationError(wt)
-		if wt.ChecksIncomplete && wt.IntegrationError == "" {
+		if wt.ChecksIncomplete {
 			integration += " (partial)"
 		}
 		gitState := "-"

@@ -27,3 +27,19 @@ func TestRenderStatusKeepsNoteAndDiagnostic(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderStatusMarksFailedIntegrationAsPartial(t *testing.T) {
+	var out bytes.Buffer
+	err := RenderStatus(&out, app.ListResult{Worktrees: []app.WorktreeView{{
+		Name:             "cancelled",
+		Integration:      "unknown",
+		IntegrationError: "context canceled",
+		ChecksIncomplete: true,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "unknown: context canceled (partial)") {
+		t.Fatalf("rendered status missing partial integration indicator:\n%s", out.String())
+	}
+}

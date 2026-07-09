@@ -188,6 +188,9 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 		if err != nil {
 			return err
 		}
+		if err := git.ValidateRevision(mapping.Branch); err != nil {
+			return err
+		}
 		existing := make([]string, 0, len(store.Worktrees))
 		for _, wt := range store.Worktrees {
 			existing = append(existing, filepath.Join(root, wt.Path))

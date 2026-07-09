@@ -49,6 +49,20 @@ func TestAddRejectsOptionLikeBaseBeforeGitWorktree(t *testing.T) {
 	}
 }
 
+func TestAddRejectsOptionLikeBranchBeforeGitWorktree(t *testing.T) {
+	root := initGitRepo(t)
+	t.Chdir(root)
+
+	_, err := New().Add(context.Background(), AddOptions{Name: "bad-branch", Branch: "--git-dir=outside"})
+	if err == nil || !strings.Contains(err.Error(), "values beginning with '-'") {
+		t.Fatalf("error = %v, want invalid revision", err)
+	}
+	out := runGitOutput(t, root, "worktree", "list", "--porcelain")
+	if strings.Contains(out, "bad-branch") {
+		t.Fatalf("worktree should not be created for invalid branch:\n%s", out)
+	}
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

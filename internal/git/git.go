@@ -194,6 +194,9 @@ func Dirty(ctx context.Context, root string) (bool, error) {
 }
 
 func AheadBehindWithError(ctx context.Context, root, base string) (int, int, error) {
+	if err := ValidateRevision(base); err != nil {
+		return 0, 0, err
+	}
 	out, err := Run(ctx, root, "rev-list", "--left-right", "--count", base+"...HEAD")
 	if err != nil {
 		return 0, 0, err
@@ -263,6 +266,12 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 }
 
 func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, error) {
+	if err := ValidateRevision(ancestor); err != nil {
+		return false, err
+	}
+	if err := ValidateRevision(descendant); err != nil {
+		return false, err
+	}
 	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestor, descendant)
 	cmd.Dir = root
 	var stderr bytes.Buffer

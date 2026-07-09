@@ -87,6 +87,26 @@ func TestIntegrationRejectsOptionLikeBase(t *testing.T) {
 	}
 }
 
+func TestAheadBehindWithErrorRejectsInvalidBase(t *testing.T) {
+	root := initRepo(t)
+	for _, base := range []string{"", "--git-dir=outside"} {
+		t.Run(base, func(t *testing.T) {
+			_, _, err := AheadBehindWithError(context.Background(), root, base)
+			if err == nil {
+				t.Fatal("expected an invalid revision error")
+			}
+		})
+	}
+}
+
+func TestIsAncestorRejectsOptionLikeRevision(t *testing.T) {
+	root := initRepo(t)
+	_, err := IsAncestor(context.Background(), root, "HEAD", "--git-dir=outside")
+	if err == nil {
+		t.Fatal("expected an invalid revision error")
+	}
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
