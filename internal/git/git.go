@@ -3,10 +3,12 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -168,31 +170,111 @@ func Fetch(ctx context.Context, root string) error {
 }
 
 func IsDirty(ctx context.Context, root string) bool {
+	dirty, err := Dirty(ctx, root)
+	return err != nil || dirty
+}
+
+func Dirty(ctx context.Context, root string) (bool, error) {
 	out, err := Run(ctx, root, "status", "--porcelain=v1", "--untracked-files=all")
-	return err != nil || out != ""
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
 }
 
 func AheadBehind(ctx context.Context, root, base string) (int, int) {
+	ahead, behind, _ := AheadBehindWithError(ctx, root, base)
+	return ahead, behind
+}
+
+func AheadBehindWithError(ctx context.Context, root, base string) (int, int, error) {
 	out, err := Run(ctx, root, "rev-list", "--left-right", "--count", base+"...HEAD")
-	if err != nil || out == "" {
-		return 0, 0
+	if err != nil {
+		return 0, 0, err
+	}
+	if out == "" {
+		return 0, 0, fmt.Errorf("parse ahead/behind count: empty output")
 	}
 	fields := strings.Fields(out)
 	if len(fields) != 2 {
-		return 0, 0
+		return 0, 0, fmt.Errorf("parse ahead/behind count %q", out)
 	}
-	return atoi(fields[1]), atoi(fields[0])
+	return atoi(fields[1]), atoi(fields[0]), nil
 }
 
+// Diff returns the combined staged and unstaged patch relative to HEAD.
+// Untracked files remain visible through Dirty but have no Git patch to print.
+func Diff(ctx context.Context, root string) (string, error) {
+	return Run(ctx, root, "diff", "HEAD")
+}
+
+// Integration reports the current local relationship between HEAD and base.
+// It avoids an ancestry walk for active branches by first asking Git whether
+// HEAD contains any non-patch-equivalent commits relative to base.
+func Integration(ctx context.Context, root, base string) (string, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return "unknown", fmt.Errorf("inspect worktree: %w", err)
+	}
+	if !info.IsDir() {
+		return "unknown", fmt.Errorf("inspect worktree: not a directory")
+	}
+
+	out, err := Run(ctx, root, "rev-list", "--right-only", "--cherry-pick", "--no-merges", "--count", base+"...HEAD")
+	if err != nil {
+		return "unknown", err
+	}
+	count, err := strconv.Atoi(out)
+	if err != nil {
+		return "unknown", fmt.Errorf("parse unmerged commit count %q: %w", out, err)
+	}
+	if count < 0 {
+		return "unknown", fmt.Errorf("parse unmerged commit count %q: negative value", out)
+	}
+	if count > 0 {
+		return "unmerged", nil
+	}
+
+	ancestor, err := IsAncestor(ctx, root, "HEAD", base)
+	if err != nil {
+		return "unknown", err
+	}
+	if ancestor {
+		return "merged", nil
+	}
+	return "patch-equivalent", nil
+}
+
+// Integrated preserves the legacy string-only helper for callers that cannot
+// surface an inspection diagnostic. New dashboard code should use Integration.
 func Integrated(ctx context.Context, root, base string) string {
-	if _, err := Run(ctx, root, "merge-base", "--is-ancestor", "HEAD", base); err == nil {
-		return "merged"
+	status, err := Integration(ctx, root, base)
+	if err != nil {
+		return "unknown"
 	}
-	out, err := Run(ctx, root, "cherry", base, "HEAD")
-	if err == nil && out != "" && !strings.Contains(out, "+") {
-		return "patch-equivalent"
+	return status
+}
+
+func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Dir = root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %s", ancestor, descendant, msg)
 	}
-	return "unmerged"
+	return true, nil
 }
 
 func atoi(value string) int {
