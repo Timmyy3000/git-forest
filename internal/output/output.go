@@ -20,68 +20,64 @@ var (
 func RenderList(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(w, titleStyle.Render("🌲 Forest worktrees"))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tAGENT\tPHASE\tGIT\tINTEGRATION\tUPDATED\tNEXT")
+	fmt.Fprintln(tw, "NAME\tAGENT\tPHASE\tINTEGRATION\tUPDATED")
 	for _, wt := range result.Worktrees {
-		gitState := "clean"
-		integration := styleIntegration(wt.Integration)
-		next := wt.Next
+		integration := styleIntegration(withIntegrationError(wt))
 		if wt.ChecksSkipped {
-			gitState = "-"
 			integration = "-"
-			next = "-"
-		} else {
-			if wt.Dirty {
-				gitState = "dirty"
-			}
-			if wt.Ahead > 0 || wt.Behind > 0 {
-				gitState = fmt.Sprintf("%s +%d -%d", gitState, wt.Ahead, wt.Behind)
-			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), gitState, integration, age(wt.Updated), next)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), integration, age(wt.Updated))
 	}
 	return tw.Flush()
 }
 
 func RenderStatus(w io.Writer, result app.ListResult) error {
-	groups := map[string][]app.WorktreeView{}
-	checksSkipped := false
+	fmt.Fprintln(w, titleStyle.Render("Forest Git health"))
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tGIT\tINTEGRATION\tUPDATED\tNOTE")
 	for _, wt := range result.Worktrees {
-		if wt.ChecksSkipped {
-			checksSkipped = true
+		integration := withIntegrationError(wt)
+		if wt.ChecksIncomplete {
+			integration += " (partial)"
 		}
-		group := "Active"
-		switch {
-		case wt.Phase == "blocked":
-			group = "Blocked"
-		case wt.ChecksSkipped:
-			// Dirty and Next were not computed, so the git-based groups
-			// (Ready for review / Ready to close) cannot be determined.
-			if wt.Phase == "" {
-				group = "Unknown activity"
+		gitState := "-"
+		if wt.ChecksIncomplete {
+			gitState = "unknown"
+		} else if !wt.ChecksSkipped {
+			gitState = "clean"
+			if wt.Dirty {
+				gitState = "dirty"
 			}
-		case wt.Next == "close":
-			group = "Ready to close"
-		case wt.Dirty:
-			group = "Ready for review"
-		case wt.Phase == "":
-			group = "Unknown activity"
+			if !wt.DetailsSkipped && (wt.Ahead > 0 || wt.Behind > 0) {
+				gitState = fmt.Sprintf("%s +%d -%d", gitState, wt.Ahead, wt.Behind)
+			}
 		}
-		groups[group] = append(groups[group], wt)
+		note := wt.Note
+		if wt.CheckError != "" {
+			if note != "" {
+				note += "; "
+			}
+			note += wt.CheckError
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, gitState, styleIntegration(integration), age(wt.Updated), dash(note))
 	}
-	for _, name := range []string{"Active", "Blocked", "Ready for review", "Ready to close", "Unknown activity"} {
-		items := groups[name]
-		if len(items) == 0 {
-			continue
-		}
-		fmt.Fprintln(w, titleStyle.Render(name))
-		for _, wt := range items {
-			fmt.Fprintf(w, "  %s  %s  %s  %s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), wt.Note)
-		}
+	if err := tw.Flush(); err != nil {
+		return err
 	}
-	if checksSkipped {
-		fmt.Fprintln(w, warnStyle.Render("git checks skipped (--fast): review/close grouping unavailable"))
+	if result.Diff != "" {
+		fmt.Fprintln(w, "\nDiff")
+		fmt.Fprintln(w, result.Diff)
+	} else if result.DiffRequested {
+		fmt.Fprintln(w, "\nNo tracked changes to diff. Untracked files are reported as dirty but have no Git patch.")
 	}
 	return nil
+}
+
+func withIntegrationError(wt app.WorktreeView) string {
+	if wt.IntegrationError == "" {
+		return wt.Integration
+	}
+	return wt.Integration + ": " + wt.IntegrationError
 }
 
 func dash(value string) string {

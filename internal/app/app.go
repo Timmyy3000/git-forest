@@ -43,12 +43,21 @@ type AddResult struct {
 }
 
 type ListOptions struct {
-	Agent   string
-	Phase   string
-	Verbose bool
+	Name     string
+	Agent    string
+	Phase    string
+	Detailed bool
 	// Fast skips the per-worktree git checks (dirty, ahead/behind,
 	// integration) so output is instant; skipped views carry ChecksSkipped.
 	Fast bool
+}
+
+type StatusOptions struct {
+	Name  string
+	Agent string
+	Phase string
+	Fast  bool
+	Diff  bool
 }
 
 type WorktreeView struct {
@@ -63,14 +72,26 @@ type WorktreeView struct {
 	Ahead       int       `json:"ahead"`
 	Behind      int       `json:"behind"`
 	Integration string    `json:"integration"`
-	Next        string    `json:"next"`
+	// IntegrationError explains why Integration is unknown.
+	IntegrationError string `json:"integrationError,omitempty"`
+	// CheckError captures failures from detailed Git health checks.
+	CheckError string `json:"checkError,omitempty"`
+	// ChecksIncomplete marks detailed output with one or more unavailable Git
+	// checks. Dirty, Ahead, and Behind must not be trusted in that state.
+	ChecksIncomplete bool   `json:"checksIncomplete,omitempty"`
+	Next             string `json:"next"`
 	// ChecksSkipped marks that Dirty, Ahead, Behind, and Integration were
 	// not computed (--fast); their zero values carry no meaning.
 	ChecksSkipped bool `json:"checksSkipped,omitempty"`
+	// DetailsSkipped marks an integration-only view. Dirty, Ahead, Behind,
+	// and Next were not computed and their zero values carry no meaning.
+	DetailsSkipped bool `json:"detailsSkipped,omitempty"`
 }
 
 type ListResult struct {
-	Worktrees []WorktreeView `json:"worktrees"`
+	Worktrees     []WorktreeView `json:"worktrees"`
+	Diff          string         `json:"diff,omitempty"`
+	DiffRequested bool           `json:"-"`
 }
 
 type MarkOptions struct {
@@ -160,8 +181,14 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 		if base == "" {
 			base = git.DefaultBranch(ctx, root)
 		}
+		if err := git.ValidateRevision(base); err != nil {
+			return err
+		}
 		mapping, err := mapAdd(opts)
 		if err != nil {
+			return err
+		}
+		if err := git.ValidateRevision(mapping.Branch); err != nil {
 			return err
 		}
 		existing := make([]string, 0, len(store.Worktrees))
@@ -247,6 +274,9 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 	}
 	var selected []state.Worktree
 	for _, wt := range store.Worktrees {
+		if opts.Name != "" && wt.ID != opts.Name && wt.Name != opts.Name && wt.Branch != opts.Name {
+			continue
+		}
 		if opts.Agent != "" && wt.Activity.Agent != opts.Agent {
 			continue
 		}
@@ -254,6 +284,9 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 			continue
 		}
 		selected = append(selected, wt)
+	}
+	if opts.Name != "" && len(selected) == 0 {
+		return ListResult{}, fmt.Errorf("unknown worktree %s", opts.Name)
 	}
 	views := make([]WorktreeView, len(selected))
 	var wg sync.WaitGroup
@@ -273,6 +306,17 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 			views[i] = view
 			continue
 		}
+		if !opts.Detailed {
+			wg.Add(1)
+			go func(i int, view WorktreeView, base string) {
+				defer wg.Done()
+				view.Integration, view.IntegrationError = collectIntegration(ctx, view.Path, base)
+				view.DetailsSkipped = true
+				view.ChecksIncomplete = view.IntegrationError != ""
+				views[i] = view
+			}(i, view, wt.Base)
+			continue
+		}
 		wg.Add(1)
 		go func(i int, view WorktreeView, base, phase string) {
 			defer wg.Done()
@@ -281,7 +325,12 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 			view.Ahead = checks.ahead
 			view.Behind = checks.behind
 			view.Integration = checks.integration
-			view.Next = nextAction(checks.dirty, checks.integration, phase)
+			view.IntegrationError = checks.integrationError
+			view.CheckError = checks.checkError
+			view.ChecksIncomplete = checks.incomplete
+			if checks.checkError == "" {
+				view.Next = nextAction(checks.dirty, checks.integration, phase)
+			}
 			views[i] = view
 		}(i, view, wt.Base, wt.Activity.Phase)
 	}
@@ -289,14 +338,48 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 	return ListResult{Worktrees: views}, nil
 }
 
+func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error) {
+	if opts.Diff && opts.Name == "" {
+		return ListResult{}, fmt.Errorf("--diff requires a worktree name")
+	}
+	if opts.Diff && opts.Fast {
+		return ListResult{}, fmt.Errorf("--diff cannot be used with --fast")
+	}
+	result, err := a.List(ctx, ListOptions{
+		Name:     opts.Name,
+		Agent:    opts.Agent,
+		Phase:    opts.Phase,
+		Detailed: !opts.Fast,
+		Fast:     opts.Fast,
+	})
+	if err != nil {
+		return ListResult{}, err
+	}
+	if !opts.Diff {
+		return result, nil
+	}
+	if len(result.Worktrees) != 1 {
+		return ListResult{}, fmt.Errorf("--diff requires exactly one managed worktree")
+	}
+	result.Diff, err = git.Diff(ctx, result.Worktrees[0].Path)
+	if err != nil {
+		return ListResult{}, err
+	}
+	result.DiffRequested = true
+	return result, nil
+}
+
 // gitCheckSlots bounds concurrent git subprocesses across all worktree
 // checks; spawning git is the dominant cost, especially on Windows.
 var gitCheckSlots = make(chan struct{}, 8)
 
 type gitChecks struct {
-	dirty         bool
-	ahead, behind int
-	integration   string
+	dirty            bool
+	ahead, behind    int
+	integration      string
+	integrationError string
+	checkError       string
+	incomplete       bool
 }
 
 // collectGitChecks runs the three per-worktree git checks concurrently.
@@ -305,30 +388,79 @@ type gitChecks struct {
 // on a semaphore slot.
 func collectGitChecks(ctx context.Context, path, base string) gitChecks {
 	var (
-		wg          sync.WaitGroup
-		dirty       bool
-		ahead       int
-		behind      int
-		integration string
+		wg           sync.WaitGroup
+		dirty        bool
+		ahead        int
+		behind       int
+		integration  string
+		dirtyErr     error
+		aheadErr     error
+		integrateErr error
 	)
-	run := func(fn func()) {
+	run := func(fn func(), cancelled func(error)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			select {
 			case gitCheckSlots <- struct{}{}:
 			case <-ctx.Done():
+				cancelled(ctx.Err())
 				return
 			}
 			defer func() { <-gitCheckSlots }()
 			fn()
 		}()
 	}
-	run(func() { dirty = git.IsDirty(ctx, path) })
-	run(func() { ahead, behind = git.AheadBehind(ctx, path, base) })
-	run(func() { integration = git.Integrated(ctx, path, base) })
+	run(func() { dirty, dirtyErr = git.Dirty(ctx, path) }, func(err error) { dirtyErr = err })
+	run(func() { ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base) }, func(err error) { aheadErr = err })
+	run(func() { integration, integrateErr = git.Integration(ctx, path, base) }, func(err error) { integrateErr = err })
 	wg.Wait()
-	return gitChecks{dirty: dirty, ahead: ahead, behind: behind, integration: integration}
+	if dirtyErr != nil {
+		dirty = true
+	}
+	if aheadErr != nil {
+		ahead, behind = -1, -1
+	}
+	if integration == "" && integrateErr != nil {
+		integration = "unknown"
+	}
+	var diagnostics []string
+	if dirtyErr != nil {
+		diagnostics = append(diagnostics, "dirty: "+dirtyErr.Error())
+	}
+	if aheadErr != nil {
+		diagnostics = append(diagnostics, "ahead/behind: "+aheadErr.Error())
+	}
+	if integrateErr != nil {
+		diagnostics = append(diagnostics, "integration: "+integrateErr.Error())
+	}
+	return gitChecks{
+		dirty:            dirty,
+		ahead:            ahead,
+		behind:           behind,
+		integration:      integration,
+		integrationError: errorText(integrateErr),
+		checkError:       strings.Join(diagnostics, "; "),
+		incomplete:       len(diagnostics) > 0,
+	}
+}
+
+func collectIntegration(ctx context.Context, path, base string) (string, string) {
+	select {
+	case gitCheckSlots <- struct{}{}:
+	case <-ctx.Done():
+		return "unknown", ctx.Err().Error()
+	}
+	defer func() { <-gitCheckSlots }()
+	status, err := git.Integration(ctx, path, base)
+	return status, errorText(err)
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func nextAction(dirty bool, integration, phase string) string {
@@ -465,10 +597,20 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			}
 			matched = true
 			abs := filepath.Join(root, wt.Path)
-			dirty := git.IsDirty(ctx, abs)
-			integrated := git.Integrated(ctx, abs, wt.Base)
+			dirty, dirtyErr := git.Dirty(ctx, abs)
+			if dirtyErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + dirtyErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			integrated, integrationErr := git.Integration(ctx, abs, wt.Base)
 			if dirty && !opts.IncludeDirty {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "dirty"})
+				kept = append(kept, wt)
+				continue
+			}
+			if integrationErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
 				kept = append(kept, wt)
 				continue
 			}
