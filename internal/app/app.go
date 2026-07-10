@@ -429,11 +429,11 @@ func relativeRepositoryPath(start, root string) string {
 
 func samePath(left, right string) bool {
 	var err error
-	left, err = canonicalPath(left)
+	left, err = pathutil.CanonicalPath(left)
 	if err != nil {
 		return false
 	}
-	right, err = canonicalPath(right)
+	right, err = pathutil.CanonicalPath(right)
 	if err != nil {
 		return false
 	}
@@ -441,18 +441,6 @@ func samePath(left, right string) bool {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
-}
-
-func canonicalPath(path string) (string, error) {
-	abs, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(resolved), nil
 }
 
 func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error) {

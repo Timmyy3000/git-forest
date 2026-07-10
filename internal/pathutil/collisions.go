@@ -27,11 +27,11 @@ func CheckCollision(candidate string, existing []string) error {
 }
 
 func Contains(parent, child string) (bool, error) {
-	parent, err := canonicalPath(parent)
+	parent, err := CanonicalPath(parent)
 	if err != nil {
 		return false, err
 	}
-	child, err = canonicalPath(child)
+	child, err = CanonicalPath(child)
 	if err != nil {
 		return false, err
 	}
@@ -46,7 +46,8 @@ func Contains(parent, child string) (bool, error) {
 	return filepath.IsLocal(rel), nil
 }
 
-func canonicalPath(path string) (string, error) {
+// CanonicalPath returns an absolute, symlink-resolved path for comparisons.
+func CanonicalPath(path string) (string, error) {
 	cleaned, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", err
