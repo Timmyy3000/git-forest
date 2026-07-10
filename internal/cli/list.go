@@ -13,6 +13,16 @@ func newListCommand(application *app.App) *cobra.Command {
 		Use:   "list",
 		Short: "Show the Forest worktree dashboard",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.Recursive {
+				result, err := application.ListRecursive(cmd.Context(), opts)
+				if err != nil {
+					return err
+				}
+				if outputJSON {
+					return printJSON(cmd, result)
+				}
+				return output.RenderRecursiveList(cmd.OutOrStdout(), result)
+			}
 			result, err := application.List(cmd.Context(), opts)
 			if err != nil {
 				return err
@@ -25,6 +35,7 @@ func newListCommand(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "filter by agent")
 	cmd.Flags().StringVar(&opts.Phase, "phase", "", "filter by activity phase")
+	cmd.Flags().BoolVarP(&opts.Recursive, "recursive", "r", false, "list Forest repositories below the current directory")
 	cmd.Flags().BoolVar(&opts.Fast, "fast", false, "skip all git checks and show Forest metadata only")
 	return cmd
 }

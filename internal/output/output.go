@@ -3,10 +3,12 @@ package output
 import (
 	"fmt"
 	"io"
+	"os"
 	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/Timmyy3000/git-forest/internal/app"
 )
@@ -19,16 +21,84 @@ var (
 
 func RenderList(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(w, titleStyle.Render("🌲 Forest worktrees"))
+	if terminalWidth(w) < 96 {
+		for _, wt := range result.Worktrees {
+			fmt.Fprintf(w, "%s  %s\n", wt.Name, styleIntegration(listIntegration(wt)))
+			fmt.Fprintf(w, "  %s · %s · %s\n", dash(wt.Agent), dash(wt.Phase), age(wt.Updated))
+		}
+		return nil
+	}
+	return renderListTable(w, result.Worktrees)
+}
+
+func RenderRecursiveList(w io.Writer, result app.RecursiveListResult) error {
+	return renderRecursiveList(w, result, terminalWidth(w))
+}
+
+func renderRecursiveList(w io.Writer, result app.RecursiveListResult, width int) error {
+	fmt.Fprintln(w, titleStyle.Render("🌲 Forest worktrees"))
+	if width >= 112 {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "REPOSITORY\tNAME\tAGENT\tPHASE\tINTEGRATION\tUPDATED")
+		for _, repository := range result.Repositories {
+			if repository.Error != "" {
+				fmt.Fprintf(tw, "%s\t-\t-\t-\t%s\t-\n", repository.Path, repository.Error)
+				continue
+			}
+			if len(repository.Worktrees) == 0 {
+				fmt.Fprintf(tw, "%s\t(no managed worktrees)\t-\t-\t-\t-\n", repository.Path)
+				continue
+			}
+			for _, wt := range repository.Worktrees {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", repository.Path, wt.Name, dash(wt.Agent), dash(wt.Phase), styleIntegration(listIntegration(wt)), age(wt.Updated))
+			}
+		}
+		return tw.Flush()
+	}
+	for _, repository := range result.Repositories {
+		fmt.Fprintln(w, repository.Path)
+		if repository.Error != "" {
+			fmt.Fprintf(w, "  %s\n", warnStyle.Render(repository.Error))
+			continue
+		}
+		if len(repository.Worktrees) == 0 {
+			fmt.Fprintln(w, "  no managed worktrees")
+			continue
+		}
+		for _, wt := range repository.Worktrees {
+			fmt.Fprintf(w, "  %s  %s\n", wt.Name, styleIntegration(listIntegration(wt)))
+			fmt.Fprintf(w, "    %s · %s · %s\n", dash(wt.Agent), dash(wt.Phase), age(wt.Updated))
+		}
+	}
+	return nil
+}
+
+func renderListTable(w io.Writer, worktrees []app.WorktreeView) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tAGENT\tPHASE\tINTEGRATION\tUPDATED")
-	for _, wt := range result.Worktrees {
-		integration := styleIntegration(withIntegrationError(wt))
-		if wt.ChecksSkipped {
-			integration = "-"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), integration, age(wt.Updated))
+	for _, wt := range worktrees {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, dash(wt.Agent), dash(wt.Phase), styleIntegration(listIntegration(wt)), age(wt.Updated))
 	}
 	return tw.Flush()
+}
+
+func listIntegration(wt app.WorktreeView) string {
+	if wt.ChecksSkipped {
+		return "-"
+	}
+	return withIntegrationError(wt)
+}
+
+func terminalWidth(w io.Writer) int {
+	file, ok := w.(*os.File)
+	if !ok || !term.IsTerminal(file.Fd()) {
+		return 0
+	}
+	width, _, err := term.GetSize(file.Fd())
+	if err != nil {
+		return 0
+	}
+	return width
 }
 
 func RenderStatus(w io.Writer, result app.ListResult) error {

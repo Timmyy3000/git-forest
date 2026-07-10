@@ -95,6 +95,8 @@ forest status --json
 
 Normal `forest list` refreshes the local integration result (`merged`, `patch-equivalent`, or `unmerged`) for every managed worktree without fetching. It intentionally skips dirty state, ahead/behind counts, diffs, and next actions; those entries carry `"detailsSkipped": true` in JSON.
 
+Use `forest list --recursive` (or `forest list -r`) from a parent directory to list every Forest repository nested below it. Recursive output labels the starting repository as `.` and nested repositories as `./path/to/repo`; it skips `.forest/worktrees` during discovery. Recursive JSON returns a `repositories` array, with worktrees and any load error scoped to each repository.
+
 Use `forest status` for detailed Git health. It checks clean/dirty state, ahead/behind counts, integration, and diagnostics. If one or more checks cannot complete, JSON marks the entry with `"checksIncomplete": true` and the human Git state is `unknown`; do not trust the zero values in that state. Use `forest status <name> --diff` to print the staged and unstaged patch for one named worktree. Untracked files are reported as dirty but have no Git patch to print.
 
 Add `--fast` to `list`/`status` when you only need Forest metadata: it skips every per-worktree Git check and marks each entry with `"checksSkipped": true`.
@@ -126,7 +128,7 @@ Never delete `.forest/worktrees/*` directories or run `git worktree remove` manu
 |---|---|---|
 | `forest init` | Make repo Forest-managed | `--json` `--quiet` |
 | `forest add <name>` | Create branch `forest/<name>` and worktree | `-b <branch>` `--from <ref>` `--agent` `--fetch` `--json` `--quiet` |
-| `forest list` | Dashboard: name, agent, phase, live local integration | `--agent` `--phase` `--fast` `--json` |
+| `forest list` | Dashboard: name, agent, phase, live local integration | `--agent` `--phase` `--recursive` / `-r` `--fast` `--json` |
 | `forest status [name]` | Detailed Git health; named worktree can print a diff | `--agent` `--phase` `--diff` `--fast` `--json` |
 | `forest mark` | Update phase, agent, and note | `--phase` `--agent` `--note` `--json` |
 | `forest path [name]` | Print a worktree path | `--current` `--json` |
