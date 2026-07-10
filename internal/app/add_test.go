@@ -66,6 +66,15 @@ func TestAddRejectsOptionLikeBranchBeforeGitWorktree(t *testing.T) {
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	initGitRepoAt(t, root)
+	return root
+}
+
+func initGitRepoAt(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	runGit(t, root, "init")
 	runGit(t, root, "config", "user.email", "test@example.com")
 	runGit(t, root, "config", "user.name", "Forest Test")
@@ -74,7 +83,6 @@ func initGitRepo(t *testing.T) string {
 	}
 	runGit(t, root, "add", "README.md")
 	runGit(t, root, "commit", "-m", "init")
-	return root
 }
 
 func runGitOutput(t *testing.T, dir string, args ...string) string {

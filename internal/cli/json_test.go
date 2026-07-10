@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/Timmyy3000/git-forest/internal/app"
@@ -80,6 +82,52 @@ func TestListJSONMarksIntegrationOnlyChecks(t *testing.T) {
 	}
 }
 
+func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	child := filepath.Join(parent, "child")
+	for _, repository := range []struct {
+		path string
+		name string
+	}{
+		{path: root, name: "root-worktree"},
+		{path: child, name: "child-worktree"},
+	} {
+		initForestRepo(t, repository.path)
+		t.Chdir(repository.path)
+		application := app.New()
+		if _, err := application.Init(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := application.Add(context.Background(), app.AddOptions{Name: repository.name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Chdir(parent)
+	out, err := executeTestCommand("list", "-r", "--json")
+	if err != nil {
+		t.Fatalf("recursive list failed: %v\n%s", err, out)
+	}
+	var decoded struct {
+		Repositories []struct {
+			Path      string `json:"path"`
+			Worktrees []struct {
+				Name string `json:"name"`
+			} `json:"worktrees"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Repositories) != 2 {
+		t.Fatalf("repositories = %d, want 2", len(decoded.Repositories))
+	}
+	if decoded.Repositories[0].Path != "./child" || decoded.Repositories[1].Path != "./root" {
+		t.Fatalf("repository paths = %+v", decoded.Repositories)
+	}
+}
+
 func executeTestCommand(args ...string) (string, error) {
 	outputJSON = false
 	command := newRootCommand(app.New())
@@ -98,4 +146,16 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
+}
+
+func initForestRepo(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.com")
+	runGit(t, root, "config", "user.name", "Forest Test")
+	runGit(t, root, "commit", "--allow-empty", "-m", "init")
+	runGit(t, root, "branch", "-M", "main")
 }

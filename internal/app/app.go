@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,10 +44,11 @@ type AddResult struct {
 }
 
 type ListOptions struct {
-	Name     string
-	Agent    string
-	Phase    string
-	Detailed bool
+	Name      string
+	Agent     string
+	Phase     string
+	Detailed  bool
+	Recursive bool
 	// Fast skips the per-worktree git checks (dirty, ahead/behind,
 	// integration) so output is instant; skipped views carry ChecksSkipped.
 	Fast bool
@@ -92,6 +94,17 @@ type ListResult struct {
 	Worktrees     []WorktreeView `json:"worktrees"`
 	Diff          string         `json:"diff,omitempty"`
 	DiffRequested bool           `json:"-"`
+}
+
+type RepositoryList struct {
+	Path      string         `json:"path"`
+	Worktrees []WorktreeView `json:"worktrees"`
+	Error     string         `json:"error,omitempty"`
+}
+
+type RecursiveListResult struct {
+	Repositories []RepositoryList `json:"repositories"`
+	Warnings     []string         `json:"warnings,omitempty"`
 }
 
 type MarkOptions struct {
@@ -268,6 +281,36 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 	if err != nil {
 		return ListResult{}, err
 	}
+	return a.listAt(ctx, root, opts)
+}
+
+func (a *App) ListRecursive(ctx context.Context, opts ListOptions) (RecursiveListResult, error) {
+	start, err := os.Getwd()
+	if err != nil {
+		return RecursiveListResult{}, err
+	}
+	roots, warnings, err := discoverForestRoots(ctx, start)
+	if err != nil {
+		return RecursiveListResult{}, err
+	}
+	result := RecursiveListResult{Repositories: make([]RepositoryList, 0, len(roots)), Warnings: warnings}
+	for _, root := range roots {
+		if err := ctx.Err(); err != nil {
+			return RecursiveListResult{}, err
+		}
+		repository := RepositoryList{Path: relativeRepositoryPath(start, root), Worktrees: []WorktreeView{}}
+		listed, err := a.listAt(ctx, root, opts)
+		if err != nil {
+			repository.Error = err.Error()
+		} else {
+			repository.Worktrees = listed.Worktrees
+		}
+		result.Repositories = append(result.Repositories, repository)
+	}
+	return result, nil
+}
+
+func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListResult, error) {
 	store, err := state.Load(root)
 	if err != nil {
 		return ListResult{}, err
@@ -336,6 +379,68 @@ func (a *App) List(ctx context.Context, opts ListOptions) (ListResult, error) {
 	}
 	wg.Wait()
 	return ListResult{Worktrees: views}, nil
+}
+
+func discoverForestRoots(ctx context.Context, start string) ([]string, []string, error) {
+	var roots []string
+	var warnings []string
+	err := filepath.WalkDir(start, func(path string, entry os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			warnings = append(warnings, fmt.Sprintf("skipped %s: %v", relativeRepositoryPath(start, path), walkErr))
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		switch entry.Name() {
+		case ".git", config.ForestDir:
+			return filepath.SkipDir
+		}
+		if _, err := os.Stat(filepath.Join(path, config.ForestDir)); err != nil {
+			return nil
+		}
+		root, err := git.Root(ctx, path)
+		if err != nil || !samePath(root, path) {
+			return nil
+		}
+		roots = append(roots, path)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Strings(roots)
+	return roots, warnings, nil
+}
+
+func relativeRepositoryPath(start, root string) string {
+	rel, err := filepath.Rel(start, root)
+	if err != nil || rel == "." {
+		return "."
+	}
+	return "./" + filepath.ToSlash(rel)
+}
+
+func samePath(left, right string) bool {
+	var err error
+	left, err = pathutil.CanonicalPath(left)
+	if err != nil {
+		return false
+	}
+	right, err = pathutil.CanonicalPath(right)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error) {
