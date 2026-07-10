@@ -4,6 +4,12 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+## v0.5.0 - 2026-07-10
+
+- `forest list --recursive` (or `forest list -r`) discovers Forest-managed Git repositories below the current directory and groups their worktrees using relative repository paths.
+- Recursive listing skips managed `.forest/worktrees`, preserves the normal integration-only list contract, supports `--fast`, and reports per-repository load errors without hiding healthy siblings.
+- List output now adapts to terminal width while keeping tabular output for pipes and redirected output.
+
 ## v0.4.0 - 2026-07-10
 
 - `forest list` now refreshes live local integration by default without running the full Git-health dashboard, substantially improving multi-worktree latency.
