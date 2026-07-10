@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,6 +174,47 @@ func TestListRecursiveKeepsHealthyRepositoriesWhenOneStateFails(t *testing.T) {
 	}
 	if result.Repositories[1].Path != "./healthy" || result.Repositories[1].Error != "" {
 		t.Fatalf("healthy repository = %+v", result.Repositories[1])
+	}
+}
+
+func TestListRecursiveHonorsCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := New().ListRecursive(ctx, ListOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListRecursive error = %v, want context canceled", err)
+	}
+}
+
+func TestListRecursiveFastSkipsGitChecks(t *testing.T) {
+	root := initGitRepo(t)
+	t.Chdir(root)
+	application := New()
+	if _, err := application.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.Add(context.Background(), AddOptions{Name: "speedy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.ListRecursive(context.Background(), ListOptions{Fast: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree := result.Repositories[0].Worktrees[0]
+	if !worktree.ChecksSkipped || worktree.DetailsSkipped || worktree.Integration != "unknown" {
+		t.Fatalf("fast recursive worktree = %+v", worktree)
+	}
+}
+
+func TestSamePathResolvesSymlinks(t *testing.T) {
+	realPath := t.TempDir()
+	linkPath := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if !samePath(realPath, linkPath) {
+		t.Fatalf("samePath(%q, %q) = false, want true", realPath, linkPath)
 	}
 }
 

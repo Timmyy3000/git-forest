@@ -104,6 +104,7 @@ type RepositoryList struct {
 
 type RecursiveListResult struct {
 	Repositories []RepositoryList `json:"repositories"`
+	Warnings     []string         `json:"warnings,omitempty"`
 }
 
 type MarkOptions struct {
@@ -288,12 +289,15 @@ func (a *App) ListRecursive(ctx context.Context, opts ListOptions) (RecursiveLis
 	if err != nil {
 		return RecursiveListResult{}, err
 	}
-	roots, err := discoverForestRoots(ctx, start)
+	roots, warnings, err := discoverForestRoots(ctx, start)
 	if err != nil {
 		return RecursiveListResult{}, err
 	}
-	result := RecursiveListResult{Repositories: make([]RepositoryList, 0, len(roots))}
+	result := RecursiveListResult{Repositories: make([]RepositoryList, 0, len(roots)), Warnings: warnings}
 	for _, root := range roots {
+		if err := ctx.Err(); err != nil {
+			return RecursiveListResult{}, err
+		}
 		repository := RepositoryList{Path: relativeRepositoryPath(start, root), Worktrees: []WorktreeView{}}
 		listed, err := a.listAt(ctx, root, opts)
 		if err != nil {
@@ -377,10 +381,18 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 	return ListResult{Worktrees: views}, nil
 }
 
-func discoverForestRoots(ctx context.Context, start string) ([]string, error) {
+func discoverForestRoots(ctx context.Context, start string) ([]string, []string, error) {
 	var roots []string
+	var warnings []string
 	err := filepath.WalkDir(start, func(path string, entry os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
+			warnings = append(warnings, fmt.Sprintf("skipped %s: %v", relativeRepositoryPath(start, path), walkErr))
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !entry.IsDir() {
@@ -401,10 +413,10 @@ func discoverForestRoots(ctx context.Context, start string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Strings(roots)
-	return roots, nil
+	return roots, warnings, nil
 }
 
 func relativeRepositoryPath(start, root string) string {
@@ -416,12 +428,31 @@ func relativeRepositoryPath(start, root string) string {
 }
 
 func samePath(left, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
+	var err error
+	left, err = canonicalPath(left)
+	if err != nil {
+		return false
+	}
+	right, err = canonicalPath(right)
+	if err != nil {
+		return false
+	}
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
+}
+
+func canonicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error) {

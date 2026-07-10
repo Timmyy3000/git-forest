@@ -71,3 +71,17 @@ func TestRenderRecursiveListShowsEmptyRepositoryInWideTable(t *testing.T) {
 		t.Fatalf("rendered wide recursive list:\n%s", out.String())
 	}
 }
+
+func TestRenderListKeepsTableForNonTerminalOutput(t *testing.T) {
+	var out bytes.Buffer
+	err := RenderList(&out, app.ListResult{Worktrees: []app.WorktreeView{{
+		Name:        "worktree",
+		Integration: "merged",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "NAME") || !strings.Contains(out.String(), "INTEGRATION") || !strings.Contains(out.String(), "UPDATED") {
+		t.Fatalf("non-terminal list should keep tabular output:\n%s", out.String())
+	}
+}

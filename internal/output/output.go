@@ -21,7 +21,7 @@ var (
 
 func RenderList(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(w, titleStyle.Render("🌲 Forest worktrees"))
-	if terminalWidth(w) < 96 {
+	if width := terminalWidth(w); width > 0 && width < 96 {
 		for _, wt := range result.Worktrees {
 			fmt.Fprintf(w, "%s  %s\n", wt.Name, styleIntegration(listIntegration(wt)))
 			fmt.Fprintf(w, "  %s · %s · %s\n", dash(wt.Agent), dash(wt.Phase), age(wt.Updated))
@@ -32,7 +32,11 @@ func RenderList(w io.Writer, result app.ListResult) error {
 }
 
 func RenderRecursiveList(w io.Writer, result app.RecursiveListResult) error {
-	return renderRecursiveList(w, result, terminalWidth(w))
+	width := terminalWidth(w)
+	if width == 0 {
+		width = 112
+	}
+	return renderRecursiveList(w, result, width)
 }
 
 func renderRecursiveList(w io.Writer, result app.RecursiveListResult, width int) error {
@@ -53,7 +57,10 @@ func renderRecursiveList(w io.Writer, result app.RecursiveListResult, width int)
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", repository.Path, wt.Name, dash(wt.Agent), dash(wt.Phase), styleIntegration(listIntegration(wt)), age(wt.Updated))
 			}
 		}
-		return tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		return renderWarnings(w, result.Warnings)
 	}
 	for _, repository := range result.Repositories {
 		fmt.Fprintln(w, repository.Path)
@@ -68,6 +75,15 @@ func renderRecursiveList(w io.Writer, result app.RecursiveListResult, width int)
 		for _, wt := range repository.Worktrees {
 			fmt.Fprintf(w, "  %s  %s\n", wt.Name, styleIntegration(listIntegration(wt)))
 			fmt.Fprintf(w, "    %s · %s · %s\n", dash(wt.Agent), dash(wt.Phase), age(wt.Updated))
+		}
+	}
+	return renderWarnings(w, result.Warnings)
+}
+
+func renderWarnings(w io.Writer, warnings []string) error {
+	for _, warning := range warnings {
+		if _, err := fmt.Fprintf(w, "warning: %s\n", warnStyle.Render(warning)); err != nil {
+			return err
 		}
 	}
 	return nil
