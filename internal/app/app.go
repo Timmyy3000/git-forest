@@ -382,38 +382,45 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 }
 
 func discoverForestRoots(ctx context.Context, start string) ([]string, []string, error) {
+	entries, err := os.ReadDir(start)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidates := make([]string, 0, len(entries)+1)
+	candidates = append(candidates, start)
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if entry.IsDir() {
+			candidates = append(candidates, filepath.Join(start, entry.Name()))
+		}
+	}
+
 	var roots []string
 	var warnings []string
-	err := filepath.WalkDir(start, func(path string, entry os.DirEntry, walkErr error) error {
+	for _, path := range candidates {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, nil, err
 		}
-		if walkErr != nil {
-			warnings = append(warnings, fmt.Sprintf("skipped %s: %v", relativeRepositoryPath(start, path), walkErr))
-			if entry != nil && entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
+		forestDir := filepath.Join(path, config.ForestDir)
+		info, err := os.Stat(forestDir)
+		if os.IsNotExist(err) {
+			continue
 		}
-		if !entry.IsDir() {
-			return nil
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("skipped %s: %v", relativeRepositoryPath(start, path), err))
+			continue
 		}
-		switch entry.Name() {
-		case ".git", config.ForestDir:
-			return filepath.SkipDir
-		}
-		if _, err := os.Stat(filepath.Join(path, config.ForestDir)); err != nil {
-			return nil
+		if !info.IsDir() {
+			warnings = append(warnings, fmt.Sprintf("skipped %s: %s is not a directory", relativeRepositoryPath(start, path), config.ForestDir))
+			continue
 		}
 		root, err := git.Root(ctx, path)
 		if err != nil || !samePath(root, path) {
-			return nil
+			continue
 		}
 		roots = append(roots, path)
-		return nil
-	})
-	if err != nil {
-		return nil, nil, err
 	}
 	sort.Strings(roots)
 	return roots, warnings, nil

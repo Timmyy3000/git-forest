@@ -4,6 +4,8 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+- Bound `forest list --recursive` discovery to the current directory and immediate children, avoiding expensive traversal of dependency, cache, build, and generated subtrees.
+
 ## v0.5.0 - 2026-07-10
 
 - `forest list --recursive` (or `forest list -r`) discovers Forest-managed Git repositories below the current directory and groups their worktrees using relative repository paths.
