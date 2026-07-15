@@ -4,6 +4,14 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+## v0.7.0 - 2026-07-15
+
+- Reconciles Forest state, physical worktree folders, `.git` markers, and Git registrations so stale residuals and prunable metadata are diagnosed explicitly.
+- Makes `forest status` report invalid worktree paths as incomplete instead of inspecting the parent repository.
+- Makes `forest doctor --fix` remove stale state, safely clean residual directories under `.forest/worktrees`, prune obsolete Forest Git metadata, and adopt valid untracked Forest worktrees.
+- Makes `forest close` recognize stale residuals while preserving valid dirty worktrees and invalid paths that are not safe to remove.
+- Adds cross-platform path normalization and regression coverage for Windows, macOS, nested branches, missing markers, prunable registrations, adoption, and containment safety.
+
 ## v0.6.0 - 2026-07-15
 
 - Bound `forest list --recursive` discovery to the current directory and immediate children, avoiding expensive traversal of dependency, cache, build, and generated subtrees.
