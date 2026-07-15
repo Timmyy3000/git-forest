@@ -118,6 +118,7 @@ func Worktrees(ctx context.Context, dir string) ([]WorktreeInfo, error) {
 		current = nil
 	}
 	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			flush()
 			continue
