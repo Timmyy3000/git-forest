@@ -254,6 +254,11 @@ func safeResidualPath(root, path string) error {
 	if !ok || !validStatePath(filepath.Join(config.WorktreeDir, rel)) {
 		return fmt.Errorf("path %q is outside %s", path, config.WorktreeDir)
 	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect residual path: %w", err)
+	}
 	rootCanonical, err := pathutil.CanonicalPath(forestWorktreeRoot(root))
 	if err != nil {
 		return fmt.Errorf("resolve worktree root: %w", err)
@@ -918,6 +923,11 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 					continue
 				}
 				if evidence.Registration != nil {
+					if err := safeResidualPath(root, abs); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
 					if err := git.WorktreeRemove(ctx, root, evidence.Registration.Path, true); err != nil {
 						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale Git registration: " + err.Error()})
 						kept = append(kept, wt)
@@ -1114,6 +1124,13 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 					if fix && canMutate {
 						cleanupAllowed := true
 						if evidence.Registration != nil {
+							if err := safeResidualPath(root, abs); err != nil {
+								cleanupAllowed = false
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "failed: " + err.Error()})
+							}
+						}
+						if cleanupAllowed && evidence.Registration != nil {
 							if err := git.WorktreeRemove(ctx, root, evidence.Registration.Path, true); err != nil {
 								cleanupAllowed = false
 								keep = true
@@ -1161,7 +1178,13 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			status := "prunable Git metadata: " + entry.PrunableReason
 			checks = append(checks, Check{Name: "git worktree " + id, Status: status})
 			if fix && canMutate {
-				if err := git.WorktreeRemove(ctx, root, entry.Path, true); err != nil {
+				if err := safeResidualPath(root, entry.Path); err != nil {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: " + err.Error()})
+				} else if _, err := os.Lstat(filepath.Join(entry.Path, ".git")); err == nil {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: .git marker exists; left untouched"})
+				} else if !os.IsNotExist(err) {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: inspect .git marker: " + err.Error()})
+				} else if err := git.WorktreeRemove(ctx, root, entry.Path, true); err != nil {
 					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "failed: " + err.Error()})
 				} else {
 					changed++
