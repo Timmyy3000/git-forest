@@ -35,7 +35,7 @@ func newListCommand(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", "", "filter by agent")
 	cmd.Flags().StringVar(&opts.Phase, "phase", "", "filter by activity phase")
-	cmd.Flags().BoolVarP(&opts.Recursive, "recursive", "r", false, "list Forest repositories below the current directory")
+	cmd.Flags().BoolVarP(&opts.Recursive, "recursive", "r", false, "list Forest repositories in the current directory and immediate children")
 	cmd.Flags().BoolVar(&opts.Fast, "fast", false, "skip all git checks and show Forest metadata only")
 	return cmd
 }

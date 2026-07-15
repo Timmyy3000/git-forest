@@ -133,14 +133,14 @@ forest list
 forest status
 ```
 
-To see managed worktrees across Forest repositories nested below the current directory:
+To see managed worktrees in the current directory and its immediate child Forest repositories:
 
 ```bash
 forest list --recursive
 # or: forest list -r
 ```
 
-Recursive output labels the starting repository as `.` and nested repositories as `./path/to/repo`. It skips `.forest/worktrees` while scanning, so managed worktrees are not listed as separate repositories.
+Recursive output labels the starting repository as `.` and immediate child repositories as `./repo`. Repositories nested two or more levels deep are not scanned; run the command from their direct parent instead.
 
 Mark agent progress:
 
@@ -163,7 +163,7 @@ forest close --merged --yes
 | `forest add [name]` | Create a repo-local worktree |
 | `forest add -b <branch>` | Create or attach a worktree using the branch as the identity |
 | `forest list` | Show active worktrees, agent activity, and live local integration |
-| `forest list --recursive` / `forest list -r` | List worktrees across Forest repositories below the current directory |
+| `forest list --recursive` / `forest list -r` | List worktrees in the current directory and immediate child Forest repositories |
 | `forest status [name]` | Show detailed Git health; use `forest status <name> --diff` for one worktree's patch |
 | `forest list --fast` / `forest status --fast` | Metadata-only output, skipping every Git check |
 | `forest mark` | Update phase, agent, note, and last-seen activity |

@@ -75,8 +75,10 @@ func TestListRecursiveDiscoversForestRepositories(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "root")
 	child := filepath.Join(parent, "child")
+	grandchild := filepath.Join(child, "nested")
 	initGitRepoAt(t, root)
 	initGitRepoAt(t, child)
+	initGitRepoAt(t, grandchild)
 
 	application := New()
 	t.Chdir(root)
@@ -91,6 +93,13 @@ func TestListRecursiveDiscoversForestRepositories(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := application.Add(context.Background(), AddOptions{Name: "child-worktree"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(grandchild)
+	if _, err := application.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.Add(context.Background(), AddOptions{Name: "nested-worktree"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -174,6 +183,29 @@ func TestListRecursiveKeepsHealthyRepositoriesWhenOneStateFails(t *testing.T) {
 	}
 	if result.Repositories[1].Path != "./healthy" || result.Repositories[1].Error != "" {
 		t.Fatalf("healthy repository = %+v", result.Repositories[1])
+	}
+}
+
+func TestListRecursiveWarnsWhenForestMarkerIsNotDirectory(t *testing.T) {
+	parent := t.TempDir()
+	child := filepath.Join(parent, "invalid")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, ".forest"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(parent)
+	result, err := New().ListRecursive(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Repositories) != 0 {
+		t.Fatalf("repositories = %+v, want none", result.Repositories)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], ".forest is not a directory") {
+		t.Fatalf("warnings = %+v", result.Warnings)
 	}
 }
 

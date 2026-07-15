@@ -95,7 +95,7 @@ forest status --json
 
 Normal `forest list` refreshes the local integration result (`merged`, `patch-equivalent`, or `unmerged`) for every managed worktree without fetching. It intentionally skips dirty state, ahead/behind counts, diffs, and next actions; those entries carry `"detailsSkipped": true` in JSON.
 
-Use `forest list --recursive` (or `forest list -r`) from a parent directory to list every Forest repository nested below it. Recursive output labels the starting repository as `.` and nested repositories as `./path/to/repo`; it skips `.forest/worktrees` during discovery. Recursive JSON returns a `repositories` array, with worktrees and any load error scoped to each repository.
+Use `forest list --recursive` (or `forest list -r`) from a parent directory to list the Forest repository at that directory and its immediate child Forest repositories. Recursive output labels the starting repository as `.` and immediate children as `./repo`. Repositories nested two or more levels deep are not scanned; run the command from their direct parent instead. Recursive JSON returns a `repositories` array, with worktrees and any load error scoped to each repository.
 
 Use `forest status` for detailed Git health. It checks clean/dirty state, ahead/behind counts, integration, and diagnostics. If one or more checks cannot complete, JSON marks the entry with `"checksIncomplete": true` and the human Git state is `unknown`; do not trust the zero values in that state. Use `forest status <name> --diff` to print the staged and unstaged patch for one named worktree. Untracked files are reported as dirty but have no Git patch to print.
 
