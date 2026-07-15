@@ -4,6 +4,8 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+## v0.6.0 - 2026-07-15
+
 - Bound `forest list --recursive` discovery to the current directory and immediate children, avoiding expensive traversal of dependency, cache, build, and generated subtrees.
 
 ## v0.5.0 - 2026-07-10
