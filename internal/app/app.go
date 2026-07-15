@@ -382,6 +382,9 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 }
 
 func discoverForestRoots(ctx context.Context, start string) ([]string, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	entries, err := os.ReadDir(start)
 	if err != nil {
 		return nil, nil, err
