@@ -54,6 +54,32 @@ func TestIntegrationClassifiesLiveBranchState(t *testing.T) {
 	})
 }
 
+func TestWorktreesReportsPrunableRegistration(t *testing.T) {
+	root := initRepo(t)
+	path := filepath.Join(root, "missing")
+	runGit(t, root, "worktree", "add", "-b", "feature/prunable", path, "HEAD")
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+
+	worktrees, err := Worktrees(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, worktree := range worktrees {
+		if filepath.Clean(worktree.Path) == filepath.Clean(path) {
+			if !worktree.Prunable {
+				t.Fatal("expected missing worktree registration to be prunable")
+			}
+			if worktree.PrunableReason == "" {
+				t.Fatal("expected prunable reason")
+			}
+			return
+		}
+	}
+	t.Fatalf("missing worktree path %q not returned", path)
+}
+
 func TestIntegrationReportsUninspectableWorktree(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
 	status, err := Integration(context.Background(), missing, "main")

@@ -13,9 +13,11 @@ import (
 )
 
 type WorktreeInfo struct {
-	Path   string
-	Branch string
-	Head   string
+	Path           string
+	Branch         string
+	Head           string
+	Prunable       bool
+	PrunableReason string
 }
 
 func Run(ctx context.Context, dir string, args ...string) (string, error) {
@@ -134,6 +136,11 @@ func Worktrees(ctx context.Context, dir string) ([]WorktreeInfo, error) {
 		}
 		if branch, ok := strings.CutPrefix(line, "branch "); ok {
 			current.Branch = strings.TrimPrefix(branch, "refs/heads/")
+			continue
+		}
+		if reason, ok := strings.CutPrefix(line, "prunable "); ok {
+			current.Prunable = true
+			current.PrunableReason = reason
 		}
 	}
 	flush()

@@ -48,7 +48,7 @@ func Contains(parent, child string) (bool, error) {
 
 // CanonicalPath returns an absolute, symlink-resolved path for comparisons.
 func CanonicalPath(path string) (string, error) {
-	cleaned, err := filepath.Abs(filepath.Clean(path))
+	cleaned, err := NormalizePath(path)
 	if err != nil {
 		return "", err
 	}
@@ -57,6 +57,20 @@ func CanonicalPath(path string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(evaluated), nil
+}
+
+// NormalizePath returns an absolute, cleaned path without resolving symlinks.
+// It is suitable for comparing paths reported by Git with state paths that
+// may not exist anymore.
+func NormalizePath(path string) (string, error) {
+	cleaned, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		cleaned = strings.ToLower(cleaned)
+	}
+	return filepath.Clean(cleaned), nil
 }
 
 func collisionKey(path string) string {

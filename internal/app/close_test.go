@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
 func TestCloseUnknownWorktreeErrors(t *testing.T) {
@@ -66,6 +69,39 @@ func TestCloseIncludeDirtyForcesRemoval(t *testing.T) {
 	out := runGitOutput(t, root, "worktree", "list", "--porcelain")
 	if strings.Contains(out, "grubby") {
 		t.Fatalf("git should no longer track the worktree:\n%s", out)
+	}
+}
+
+func TestCloseRemovesUnregisteredResidualWithoutCallingGitWorktreeRemove(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "ft", "stale")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "ft/stale",
+		Name:   "ft/stale",
+		Branch: "ft/stale",
+		Path:   filepath.Join(config.WorktreeDir, "ft", "stale"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Close(context.Background(), CloseOptions{Name: "ft/stale", Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || len(result.Skipped) != 0 {
+		t.Fatalf("close result = %+v, want stale residual to close", result)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("residual path remains, stat err = %v", err)
 	}
 }
 

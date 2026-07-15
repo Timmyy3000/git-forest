@@ -298,11 +298,11 @@ func TestCloseReportsInaccessibleWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Closed) != 0 || len(result.Skipped) != 1 {
-		t.Fatalf("close result = %+v, want one inaccessible skipped worktree", result)
+	if len(result.Closed) != 1 || len(result.Skipped) != 0 {
+		t.Fatalf("close result = %+v, want stale worktree to close", result)
 	}
-	if !strings.HasPrefix(result.Skipped[0].Reason, "worktree inaccessible:") {
-		t.Fatalf("skip reason = %q, want inaccessible worktree diagnostic", result.Skipped[0].Reason)
+	if _, err := os.Stat(added.Path); !os.IsNotExist(err) {
+		t.Fatalf("stale worktree folder should be removed, stat err = %v", err)
 	}
 }
 

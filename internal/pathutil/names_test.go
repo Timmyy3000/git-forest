@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +31,38 @@ func TestFromBranchUsesBranchAsIdentity(t *testing.T) {
 	}
 	if mapping.Branch != "feat/login-copy" {
 		t.Fatalf("branch = %q", mapping.Branch)
+	}
+}
+
+func TestNormalizePathCleansAndMakesAbsolute(t *testing.T) {
+	path, err := NormalizePath(filepath.Join(".", "forest", "..", "worktrees", "feature", "nested"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := NormalizePath(filepath.Join("worktrees", "feature", "nested"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != want {
+		t.Fatalf("normalized path = %q, want %q", path, want)
+	}
+}
+
+func TestNormalizePathFoldsCaseOnCaseInsensitivePlatforms(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case folding applies to windows and darwin only")
+	}
+	path := filepath.Join(t.TempDir(), "Forest", "Worktree")
+	lower, err := NormalizePath(strings.ToLower(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper, err := NormalizePath(strings.ToUpper(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lower != upper {
+		t.Fatalf("case-normalized paths differ: %q != %q", lower, upper)
 	}
 }
 
