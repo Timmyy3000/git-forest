@@ -305,9 +305,12 @@ func stateHasPath(store state.Store, root, path string) bool {
 	return false
 }
 
-func stateHasBranch(store state.Store, branch string) bool {
+func stateHasHealthyBranch(store state.Store, root string, registry gitWorktreeRegistry, branch string) bool {
 	for _, worktree := range store.Worktrees {
-		if worktree.Branch == branch {
+		if worktree.Branch != branch || !validStatePath(worktree.Path) {
+			continue
+		}
+		if inspectWorktree(filepath.Join(root, worktree.Path), registry).healthy() {
 			return true
 		}
 	}
@@ -1238,7 +1241,7 @@ func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string
 			continue
 		}
 		untracked = append(untracked, identity)
-		if !adopt || stateHasBranch(*store, branch) {
+		if !adopt || stateHasHealthyBranch(*store, root, registry, branch) {
 			continue
 		}
 		store.Worktrees = append(store.Worktrees, state.Worktree{

@@ -251,6 +251,41 @@ func TestDoctorFixRemovesStaleStateAndPrunableGitMetadata(t *testing.T) {
 	}
 }
 
+func TestDoctorFixAdoptsGitWorktreeWhenStaleStateHasSameBranch(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "adopted")
+	runGit(t, root, "worktree", "add", "-b", "feature/adopted", path, "HEAD")
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/adopted",
+		Name:   "feature/adopted",
+		Branch: "feature/adopted",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "missing-adopted"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Doctor(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheckPrefix(result, "worktree adoption", "adopted 1") {
+		t.Fatalf("expected one-pass adoption, got %#v", result.Checks)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Worktrees) != 1 || store.Worktrees[0].Path != filepath.Join(config.WorktreeDir, "feature", "adopted") {
+		t.Fatalf("state after reconciliation = %#v, want only adopted worktree", store.Worktrees)
+	}
+}
+
 func TestDoctorFixNeverRemovesPathOutsideForestWorktrees(t *testing.T) {
 	root := initGitRepo(t)
 	if err := config.Ensure(root); err != nil {
