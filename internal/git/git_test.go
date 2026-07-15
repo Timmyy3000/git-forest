@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/pathutil"
 )
 
 func TestIntegrationClassifiesLiveBranchState(t *testing.T) {
@@ -66,8 +68,16 @@ func TestWorktreesReportsPrunableRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantPath, err := pathutil.NormalizePath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, worktree := range worktrees {
-		if filepath.Clean(worktree.Path) == filepath.Clean(path) {
+		gotPath, err := pathutil.NormalizePath(worktree.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotPath == wantPath {
 			if !worktree.Prunable {
 				t.Fatal("expected missing worktree registration to be prunable")
 			}
