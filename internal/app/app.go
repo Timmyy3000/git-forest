@@ -1217,7 +1217,11 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			}
 		}
 		if removed > 0 {
-			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d stale record(s)", removed)})
+			status := fmt.Sprintf("would remove %d stale record(s)", removed)
+			if fix && canMutate {
+				status = fmt.Sprintf("removed %d stale record(s)", removed)
+			}
+			checks = append(checks, Check{Name: "state path cleanup", Status: status})
 		} else if stateHealthy {
 			checks = append(checks, Check{Name: "state paths", Status: "ok"})
 		}

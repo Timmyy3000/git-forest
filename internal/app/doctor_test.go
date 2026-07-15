@@ -115,6 +115,14 @@ func TestDoctorFixMarksExistingCreatingWorktreeActive(t *testing.T) {
 	runGit(t, root, "worktree", "add", "-b", "feature/creating", worktreePath, "HEAD")
 	t.Chdir(root)
 
+	diagnostic, err := New().Doctor(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheck(diagnostic, "worktree feature/creating status cleanup", "would mark active") {
+		t.Fatalf("expected diagnostic-only creating cleanup check, got %#v", diagnostic.Checks)
+	}
+
 	result, err := New().Doctor(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
