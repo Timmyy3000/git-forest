@@ -105,6 +105,45 @@ func TestCloseRemovesUnregisteredResidualWithoutCallingGitWorktreeRemove(t *test
 	}
 }
 
+func TestCloseKeepsNonDirectoryInvalidPath(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "ft", "file")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a worktree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "ft/file",
+		Name:   "ft/file",
+		Branch: "ft/file",
+		Path:   filepath.Join(config.WorktreeDir, "ft", "file"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Close(context.Background(), CloseOptions{Name: "ft/file", Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("close result = %+v, want invalid path to remain skipped", result)
+	}
+	if !strings.Contains(result.Skipped[0].Reason, "not a directory") {
+		t.Fatalf("skip reason = %q, want non-directory diagnostic", result.Skipped[0].Reason)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("invalid path should remain untouched: %v", err)
+	}
+}
+
 func TestCloseDirtyWithoutIncludeDirtySkips(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

@@ -163,6 +163,14 @@ type worktreeEvidence struct {
 	Registration *git.WorktreeInfo
 }
 
+func worktreePathKey(path string) string {
+	key, err := pathutil.NormalizePath(path)
+	if err == nil {
+		return key
+	}
+	return filepath.Clean(path)
+}
+
 func loadGitWorktreeRegistry(ctx context.Context, root string) gitWorktreeRegistry {
 	entries, err := git.Worktrees(ctx, root)
 	registry := gitWorktreeRegistry{Entries: entries, ByPath: make(map[string]git.WorktreeInfo), LoadErr: err}
@@ -170,11 +178,7 @@ func loadGitWorktreeRegistry(ctx context.Context, root string) gitWorktreeRegist
 		return registry
 	}
 	for _, entry := range entries {
-		key, normalizeErr := pathutil.NormalizePath(entry.Path)
-		if normalizeErr != nil {
-			continue
-		}
-		registry.ByPath[key] = entry
+		registry.ByPath[worktreePathKey(entry.Path)] = entry
 	}
 	return registry
 }
@@ -189,12 +193,9 @@ func inspectWorktree(path string, registry gitWorktreeRegistry) worktreeEvidence
 	if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
 		evidence.GitMarker = true
 	}
-	key, err := pathutil.NormalizePath(path)
-	if err == nil {
-		if registration, ok := registry.ByPath[key]; ok {
-			copy := registration
-			evidence.Registration = &copy
-		}
+	if registration, ok := registry.ByPath[worktreePathKey(path)]; ok {
+		copy := registration
+		evidence.Registration = &copy
 	}
 	return evidence
 }
@@ -917,6 +918,11 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 					kept = append(kept, wt)
 					continue
 				}
+				if !evidence.staleResidual() && (evidence.PathExists || evidence.Registration == nil) {
+					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree: " + invalidWorktreeReason(evidence, registry.LoadErr)})
+					kept = append(kept, wt)
+					continue
+				}
 				if !opts.Yes {
 					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "stale residual requires --yes"})
 					kept = append(kept, wt)
@@ -1111,7 +1117,11 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 				case evidence.healthy():
 					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "healthy"})
 					if wt.Status.LastKnown == "creating" {
-						checks = append(checks, Check{Name: "worktree " + wt.ID + " status cleanup", Status: "marked active"})
+						status := "would mark active"
+						if fix && canMutate {
+							status = "marked active"
+						}
+						checks = append(checks, Check{Name: "worktree " + wt.ID + " status cleanup", Status: status})
 						if fix && canMutate {
 							wt.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
 							changed++
@@ -1188,6 +1198,14 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "failed: " + err.Error()})
 				} else {
 					changed++
+					if info, statErr := os.Stat(entry.Path); statErr == nil && info.IsDir() {
+						if err := removeResidualDirectory(root, entry.Path); err != nil {
+							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "skipped: " + err.Error()})
+						} else {
+							changed++
+							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "removed"})
+						}
+					}
 					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "pruned"})
 				}
 			}

@@ -316,7 +316,9 @@ func TestDoctorFixNeverRemovesPathOutsideForestWorktrees(t *testing.T) {
 func TestDoctorFixLeavesValidDirtyWorktreeUntouched(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")
-	config.Ensure(root)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(root)
 	added, err := New().Add(context.Background(), AddOptions{Name: "dirty"})
 	if err != nil {

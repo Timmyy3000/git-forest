@@ -280,7 +280,7 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	}
 }
 
-func TestCloseReportsInaccessibleWorktree(t *testing.T) {
+func TestCloseRemovesMissingWorktreeState(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")
 	t.Chdir(root)
