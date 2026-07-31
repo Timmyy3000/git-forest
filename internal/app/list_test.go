@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Timmyy3000/git-forest/internal/git"
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
@@ -508,7 +509,9 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	checksCh := make(chan gitChecks, 1)
-	go func() { checksCh <- collectGitChecksAt(ctx, root, root, "main", "", true) }()
+	go func() {
+		checksCh <- collectGitChecksAt(ctx, root, root, git.ComparisonRef{Ref: "main", OID: "main"}, "", true)
+	}()
 	cancel()
 	checks := <-checksCh
 

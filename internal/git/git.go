@@ -35,9 +35,29 @@ func Run(ctx context.Context, dir string, args ...string) (string, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
+		exitCode := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		return "", &RunError{Args: append([]string(nil), args...), Message: msg, ExitCode: exitCode, Cause: err}
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+type RunError struct {
+	Args     []string
+	Message  string
+	ExitCode int
+	Cause    error
+}
+
+func (e *RunError) Error() string {
+	return fmt.Sprintf("git %s: %s", strings.Join(e.Args, " "), e.Message)
+}
+
+func (e *RunError) Unwrap() error {
+	return e.Cause
 }
 
 func Root(ctx context.Context, dir string) (string, error) {
@@ -237,6 +257,9 @@ func ValidateRevision(value string) error {
 	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
 		return fmt.Errorf("invalid revision %q: control characters are not allowed", value)
 	}
+	if strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return fmt.Errorf("invalid revision %q: whitespace is not allowed", value)
+	}
 	return nil
 }
 
@@ -299,6 +322,12 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 	return IntegrationRef(ctx, root, base, "HEAD")
 }
 
+// IntegrationWithComparison compares the worktree's checked-out HEAD against
+// a resolved comparison ref while retaining the ref name for diagnostics.
+func IntegrationWithComparison(ctx context.Context, root string, comparison ComparisonRef) (string, error) {
+	return integrationRef(ctx, root, comparison.revision(), "HEAD", comparison.Ref)
+}
+
 // IntegrationRef reports the relationship between head and base using root as
 // the repository directory. This lets callers inspect a managed branch from
 // the primary worktree even when its checked-out worktree is unavailable.
@@ -307,6 +336,23 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 // unreachable-object expiry rules, while refs and checked-out worktree files
 // remain untouched.
 func IntegrationRef(ctx context.Context, root, base, head string) (string, error) {
+	return integrationRef(ctx, root, base, head, base)
+}
+
+// IntegrationRefWithComparison compares a named head against a resolved
+// comparison ref while retaining the ref name for diagnostics.
+func IntegrationRefWithComparison(ctx context.Context, root string, comparison ComparisonRef, head string) (string, error) {
+	return integrationRef(ctx, root, comparison.revision(), head, comparison.Ref)
+}
+
+func (comparison ComparisonRef) revision() string {
+	if comparison.OID != "" {
+		return comparison.OID
+	}
+	return comparison.Ref
+}
+
+func integrationRef(ctx context.Context, root, base, head, baseLabel string) (string, error) {
 	if err := ValidateRevision(base); err != nil {
 		return "unknown", err
 	}
@@ -349,7 +395,7 @@ func IntegrationRef(ctx context.Context, root, base, head string) (string, error
 		}
 	}
 
-	return aggregateIntegration(ctx, root, base, head)
+	return aggregateIntegration(ctx, root, base, head, baseLabel)
 }
 
 func rightOnlyMergeCount(ctx context.Context, root, base, head string) (int, error) {
@@ -367,9 +413,13 @@ func rightOnlyMergeCount(ctx context.Context, root, base, head string) (int, err
 	return count, nil
 }
 
-func aggregateIntegration(ctx context.Context, root, base, head string) (string, error) {
+func aggregateIntegration(ctx context.Context, root, base, head, baseLabel string) (string, error) {
 	stdout, err := runMergeTree(ctx, root, base, head)
 	if err != nil {
+		var runErr *RunError
+		if errors.As(err, &runErr) && runErr.ExitCode == 1 {
+			return "unmerged", nil
+		}
 		if strings.Contains(err.Error(), "CONFLICT") {
 			return "unmerged", nil
 		}
@@ -378,7 +428,7 @@ func aggregateIntegration(ctx context.Context, root, base, head string) (string,
 
 	fields := strings.Fields(stdout)
 	if len(fields) == 0 {
-		return "unknown", fmt.Errorf("git merge-tree %s %s returned no tree", base, head)
+		return "unknown", fmt.Errorf("git merge-tree %s %s returned no tree", baseLabel, head)
 	}
 	baseTree, err := Run(ctx, root, "rev-parse", "--verify", base+"^{tree}")
 	if err != nil {

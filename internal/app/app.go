@@ -366,14 +366,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		}
 		comparison, ok := comparisons[wt.Base]
 		if !ok {
-			view.Integration = "unknown"
-			view.IntegrationError = "missing comparison ref"
-			view.ChecksIncomplete = true
-			if !opts.Detailed {
-				view.DetailsSkipped = true
-			}
-			views[i] = view
-			continue
+			comparison.err = fmt.Errorf("missing comparison ref")
 		}
 		if comparison.err != nil {
 			view.Integration = "unknown"
@@ -391,9 +384,9 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		headFromWorktree := head == ""
 		if !opts.Detailed {
 			wg.Add(1)
-			go func(i int, view WorktreeView, repositoryRoot, base, head string, headFromWorktree bool) {
+			go func(i int, view WorktreeView, repositoryRoot string, comparison git.ComparisonRef, head string, headFromWorktree bool) {
 				defer wg.Done()
-				view.Integration, view.IntegrationError = collectIntegrationAt(ctx, view.Path, repositoryRoot, base, head, headFromWorktree)
+				view.Integration, view.IntegrationError = collectIntegrationAt(ctx, view.Path, repositoryRoot, comparison, head, headFromWorktree)
 				if view.IntegrationError != "" {
 					view.BaseRef = ""
 					view.ComparisonSource = ""
@@ -401,13 +394,13 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 				view.DetailsSkipped = true
 				view.ChecksIncomplete = view.IntegrationError != ""
 				views[i] = view
-			}(i, view, root, comparison.ref.OID, head, headFromWorktree)
+			}(i, view, root, comparison.ref, head, headFromWorktree)
 			continue
 		}
 		wg.Add(1)
-		go func(i int, view WorktreeView, repositoryRoot, base, head, phase string, headFromWorktree bool) {
+		go func(i int, view WorktreeView, repositoryRoot string, comparison git.ComparisonRef, head, phase string, headFromWorktree bool) {
 			defer wg.Done()
-			checks := collectGitChecksAt(ctx, view.Path, repositoryRoot, base, head, headFromWorktree)
+			checks := collectGitChecksAt(ctx, view.Path, repositoryRoot, comparison, head, headFromWorktree)
 			view.Dirty = checks.dirty
 			view.Ahead = checks.ahead
 			view.Behind = checks.behind
@@ -423,7 +416,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 				view.Next = nextAction(checks.dirty, checks.integration, phase)
 			}
 			views[i] = view
-		}(i, view, root, comparison.ref.OID, head, wt.Activity.Phase, headFromWorktree)
+		}(i, view, root, comparison.ref, head, wt.Activity.Phase, headFromWorktree)
 	}
 	wg.Wait()
 	return ListResult{Worktrees: views}, nil
@@ -556,7 +549,11 @@ type gitChecks struct {
 // Each goroutine writes its own local before the WaitGroup barrier publishes
 // the results; a cancelled context abandons queued checks instead of waiting
 // on a semaphore slot.
-func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head string, headFromWorktree bool) gitChecks {
+func collectGitChecksAt(ctx context.Context, path, repositoryRoot string, comparison git.ComparisonRef, head string, headFromWorktree bool) gitChecks {
+	base := comparison.OID
+	if base == "" {
+		base = comparison.Ref
+	}
 	if _, err := os.Stat(path); err != nil {
 		diagnostic := "worktree inaccessible: " + err.Error()
 		return gitChecks{
@@ -603,10 +600,10 @@ func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head st
 	}, func(err error) { aheadErr = err })
 	run(func() {
 		if headFromWorktree {
-			integration, integrateErr = git.Integration(ctx, path, base)
+			integration, integrateErr = git.IntegrationWithComparison(ctx, path, comparison)
 			return
 		}
-		integration, integrateErr = git.IntegrationRef(ctx, repositoryRoot, base, head)
+		integration, integrateErr = git.IntegrationRefWithComparison(ctx, repositoryRoot, comparison, head)
 	}, func(err error) { integrateErr = err })
 	wg.Wait()
 	if dirtyErr != nil {
@@ -641,7 +638,7 @@ func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head st
 
 // collectIntegrationAt explicitly chooses between the worktree's checked-out
 // HEAD and a named head resolved from repositoryRoot.
-func collectIntegrationAt(ctx context.Context, path, repositoryRoot, base, head string, headFromWorktree bool) (string, string) {
+func collectIntegrationAt(ctx context.Context, path, repositoryRoot string, comparison git.ComparisonRef, head string, headFromWorktree bool) (string, string) {
 	select {
 	case gitCheckSlots <- struct{}{}:
 	case <-ctx.Done():
@@ -654,9 +651,9 @@ func collectIntegrationAt(ctx context.Context, path, repositoryRoot, base, head 
 	var status string
 	var err error
 	if headFromWorktree {
-		status, err = git.Integration(ctx, path, base)
+		status, err = git.IntegrationWithComparison(ctx, path, comparison)
 	} else {
-		status, err = git.IntegrationRef(ctx, repositoryRoot, base, head)
+		status, err = git.IntegrationRefWithComparison(ctx, repositoryRoot, comparison, head)
 	}
 	return status, errorText(err)
 }
@@ -840,12 +837,17 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				// An empty branch is corrupted state. Resolve HEAD from the
 				// worktree itself; resolving HEAD from root would inspect the
 				// repository's primary worktree instead.
-				integrated, integrationErr = git.Integration(ctx, abs, comparison.OID)
+				integrated, integrationErr = git.IntegrationWithComparison(ctx, abs, comparison)
 			} else {
-				integrated, integrationErr = git.IntegrationRef(ctx, root, comparison.OID, wt.Branch)
+				integrated, integrationErr = git.IntegrationRefWithComparison(ctx, root, comparison, wt.Branch)
 			}
 			if integrationErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			if opts.Merged && integrated == "unknown" {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown"})
 				kept = append(kept, wt)
 				continue
 			}

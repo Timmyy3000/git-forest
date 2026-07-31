@@ -163,4 +163,11 @@ func TestCloseMergedHonorsName(t *testing.T) {
 	if _, err := os.Stat(second.Path); err != nil {
 		t.Fatalf("non-selected worktree must survive, stat err = %v", err)
 	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find(second.Name); !ok {
+		t.Fatalf("non-selected worktree %q must remain in state", second.Name)
+	}
 }

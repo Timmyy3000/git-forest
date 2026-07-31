@@ -233,6 +233,9 @@ func TestValidateRevisionRejectsControlCharacters(t *testing.T) {
 	if err := ValidateRevision("main\nfeature"); err == nil {
 		t.Fatal("expected control characters to be rejected")
 	}
+	if err := ValidateRevision("main feature"); err == nil {
+		t.Fatal("expected whitespace to be rejected")
+	}
 }
 
 func TestAheadBehindWithErrorRejectsInvalidBase(t *testing.T) {
