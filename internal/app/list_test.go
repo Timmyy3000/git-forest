@@ -400,6 +400,13 @@ func TestCloseWithMissingBranchUsesWorktreeHead(t *testing.T) {
 	if len(result.Closed) != 1 || result.Closed[0] != added.Name {
 		t.Fatalf("close result = %+v, want %q closed", result, added.Name)
 	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find(added.Name); ok {
+		t.Fatalf("closed worktree %q remains in state", added.Name)
+	}
 }
 
 func TestStatusProvidesDetailedHealthAndNamedDiff(t *testing.T) {

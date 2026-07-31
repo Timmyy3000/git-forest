@@ -622,10 +622,6 @@ func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head st
 	}
 }
 
-func collectIntegration(ctx context.Context, path, base string) (string, string) {
-	return collectIntegrationAt(ctx, path, path, base, "")
-}
-
 func collectIntegrationAt(ctx context.Context, path, repositoryRoot, base, head string) (string, string) {
 	select {
 	case gitCheckSlots <- struct{}{}:
@@ -809,10 +805,6 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			head := wt.Branch
-			if head == "" {
-				head = "HEAD"
-			}
 			var integrated string
 			var integrationErr error
 			if wt.Branch == "" {
@@ -821,7 +813,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				// repository's primary worktree instead.
 				integrated, integrationErr = git.Integration(ctx, abs, comparison.Ref)
 			} else {
-				integrated, integrationErr = git.IntegrationRef(ctx, root, comparison.Ref, head)
+				integrated, integrationErr = git.IntegrationRef(ctx, root, comparison.Ref, wt.Branch)
 			}
 			if integrationErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})

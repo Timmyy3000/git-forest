@@ -27,6 +27,9 @@ func Run(ctx context.Context, dir string, args ...string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
+		if msg == "" {
 			msg = err.Error()
 		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), msg)
@@ -357,13 +360,9 @@ func rightOnlyMergeCount(ctx context.Context, root, base, head string) (int, err
 }
 
 func aggregateIntegration(ctx context.Context, root, base, head string) (string, error) {
-	stdout, stderr, err := runMergeTree(ctx, root, base, head)
+	stdout, err := runMergeTree(ctx, root, base, head)
 	if err != nil {
-		diagnostic := strings.TrimSpace(stderr)
-		if diagnostic == "" {
-			diagnostic = strings.TrimSpace(stdout)
-		}
-		if strings.Contains(diagnostic, "CONFLICT") || strings.Contains(err.Error(), "CONFLICT") {
+		if strings.Contains(err.Error(), "CONFLICT") {
 			return "unmerged", nil
 		}
 		return "unknown", err
@@ -383,24 +382,8 @@ func aggregateIntegration(ctx context.Context, root, base, head string) (string,
 	return "unmerged", nil
 }
 
-func runMergeTree(ctx context.Context, root, base, head string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, "git", "merge-tree", "--write-tree", base, head)
-	cmd.Dir = root
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return stdout.String(), stderr.String(), nil
-	}
-	if ctx.Err() != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("git merge-tree %s %s: %w", base, head, ctx.Err())
-	}
-	diagnostic := strings.TrimSpace(stderr.String())
-	if diagnostic == "" {
-		diagnostic = err.Error()
-	}
-	return stdout.String(), stderr.String(), fmt.Errorf("git merge-tree %s %s: %s", base, head, diagnostic)
+func runMergeTree(ctx context.Context, root, base, head string) (string, error) {
+	return Run(ctx, root, "merge-tree", "--write-tree", base, head)
 }
 
 func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, error) {
