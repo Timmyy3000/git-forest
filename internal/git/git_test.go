@@ -124,8 +124,15 @@ func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) 
 	if resolved.Ref != "origin/main" || resolved.Source != "remote-tracking" {
 		t.Fatalf("qualified resolved = %+v, want origin/main from remote-tracking", resolved)
 	}
-
 	runGit(t, root, "update-ref", "-d", "refs/remotes/origin/main")
+	resolved, err = ResolveComparisonRef(context.Background(), root, "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Ref != "refs/heads/main" || resolved.Source != "local" {
+		t.Fatalf("qualified fallback resolved = %+v, want refs/heads/main from local", resolved)
+	}
+
 	runGit(t, root, "commit", "--allow-empty", "-m", "branch tip")
 	runGit(t, root, "tag", "main", "HEAD^")
 	resolved, err = ResolveComparisonRef(context.Background(), root, "main")

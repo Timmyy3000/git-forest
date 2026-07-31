@@ -220,8 +220,19 @@ func ResolveComparisonRef(ctx context.Context, root, base string) (ComparisonRef
 	}
 	candidates := []candidate{{ref: base, source: "local"}}
 	switch {
-	case strings.HasPrefix(base, "origin/"), strings.HasPrefix(base, "refs/remotes/"):
-		candidates = []candidate{{ref: base, source: "remote-tracking"}}
+	case strings.HasPrefix(base, "origin/"):
+		local := strings.TrimPrefix(base, "origin/")
+		candidates = []candidate{
+			{ref: base, source: "remote-tracking"},
+			{ref: "refs/heads/" + local, source: "local"},
+		}
+	case strings.HasPrefix(base, "refs/remotes/"):
+		local := strings.TrimPrefix(base, "refs/remotes/")
+		local = strings.TrimPrefix(local, "origin/")
+		candidates = []candidate{
+			{ref: base, source: "remote-tracking"},
+			{ref: "refs/heads/" + local, source: "local"},
+		}
 	case strings.HasPrefix(base, "refs/"):
 		// Fully-qualified local refs should be resolved as requested rather
 		// than being rewritten to an origin ref.
@@ -366,6 +377,20 @@ func integrationRef(ctx context.Context, root, base, head, baseLabel string) (st
 	if !info.IsDir() {
 		return "unknown", fmt.Errorf("inspect repository: not a directory")
 	}
+	if baseLabel == "" {
+		baseLabel = base
+	}
+	headLabel := head
+	resolvedBase, err := Run(ctx, root, "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return "unknown", fmt.Errorf("resolve comparison base %s: %w", baseLabel, err)
+	}
+	resolvedHead, err := Run(ctx, root, "rev-parse", "--verify", head+"^{commit}")
+	if err != nil {
+		return "unknown", fmt.Errorf("resolve comparison head %s: %w", headLabel, err)
+	}
+	base = resolvedBase
+	head = resolvedHead
 
 	out, err := Run(ctx, root, "rev-list", "--right-only", "--cherry-pick", "--no-merges", "--count", base+"..."+head)
 	if err != nil {
@@ -395,7 +420,7 @@ func integrationRef(ctx context.Context, root, base, head, baseLabel string) (st
 		}
 	}
 
-	return aggregateIntegration(ctx, root, base, head, baseLabel)
+	return aggregateIntegration(ctx, root, base, head, baseLabel, headLabel)
 }
 
 func rightOnlyMergeCount(ctx context.Context, root, base, head string) (int, error) {
@@ -413,7 +438,7 @@ func rightOnlyMergeCount(ctx context.Context, root, base, head string) (int, err
 	return count, nil
 }
 
-func aggregateIntegration(ctx context.Context, root, base, head, baseLabel string) (string, error) {
+func aggregateIntegration(ctx context.Context, root, base, head, baseLabel, headLabel string) (string, error) {
 	stdout, err := runMergeTree(ctx, root, base, head)
 	if err != nil {
 		var runErr *RunError
@@ -428,7 +453,7 @@ func aggregateIntegration(ctx context.Context, root, base, head, baseLabel strin
 
 	fields := strings.Fields(stdout)
 	if len(fields) == 0 {
-		return "unknown", fmt.Errorf("git merge-tree %s %s returned no tree", baseLabel, head)
+		return "unknown", fmt.Errorf("git merge-tree %s %s returned no tree", baseLabel, headLabel)
 	}
 	baseTree, err := Run(ctx, root, "rev-parse", "--verify", base+"^{tree}")
 	if err != nil {

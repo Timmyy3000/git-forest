@@ -42,6 +42,9 @@ func newCloseCommand(application *app.App) *cobra.Command {
 			for _, skipped := range result.Skipped {
 				fmt.Fprintf(cmd.OutOrStdout(), "Skipped %s: %s\n", skipped.Name, skipped.Reason)
 			}
+			for _, warning := range result.Warnings {
+				fmt.Fprintf(cmd.OutOrStdout(), "Warning: %s\n", warning)
+			}
 			return nil
 		},
 	}

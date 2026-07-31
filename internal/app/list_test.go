@@ -147,12 +147,15 @@ func TestListAndClosePreferOriginBaseForSquashedWorktree(t *testing.T) {
 		t.Fatalf("comparison = baseRef=%q source=%q, want origin/main/remote-tracking", view.BaseRef, view.ComparisonSource)
 	}
 
-	closed, err := application.Close(context.Background(), CloseOptions{Merged: true, Yes: true})
+	closed, err := application.Close(context.Background(), CloseOptions{Merged: true, Yes: true, DeleteBranch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(closed.Closed) != 1 || closed.Closed[0] != "stale" {
 		t.Fatalf("close result = %+v, want stale closed", closed)
+	}
+	if len(closed.Warnings) != 1 || !strings.Contains(closed.Warnings[0], "was not deleted") {
+		t.Fatalf("close warnings = %v, want branch deletion warning", closed.Warnings)
 	}
 	store, err := state.Load(root)
 	if err != nil {

@@ -135,8 +135,9 @@ type CloseOptions struct {
 }
 
 type CloseResult struct {
-	Closed  []string  `json:"closed"`
-	Skipped []Skipped `json:"skipped"`
+	Closed   []string  `json:"closed"`
+	Skipped  []Skipped `json:"skipped"`
+	Warnings []string  `json:"warnings,omitempty"`
 }
 
 type Skipped struct {
@@ -867,7 +868,9 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			if opts.DeleteBranch && wt.Branch != "" {
-				_ = git.DeleteBranch(ctx, root, wt.Branch)
+				if err := git.DeleteBranch(ctx, root, wt.Branch); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: branch %q was not deleted: %v", wt.Name, wt.Branch, err))
+				}
 			}
 			result.Closed = append(result.Closed, wt.Name)
 			_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
