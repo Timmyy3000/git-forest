@@ -389,6 +389,9 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	if detailed.Worktrees[0].Dirty {
 		t.Fatal("inaccessible worktree must not be reported as dirty")
 	}
+	if detailed.Worktrees[0].BaseRef != "" || detailed.Worktrees[0].ComparisonSource != "" {
+		t.Fatalf("detailed failed integration should omit comparison metadata, got baseRef=%q source=%q", detailed.Worktrees[0].BaseRef, detailed.Worktrees[0].ComparisonSource)
+	}
 }
 
 func TestCloseReportsInaccessibleWorktree(t *testing.T) {

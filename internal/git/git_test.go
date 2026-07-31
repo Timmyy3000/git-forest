@@ -184,7 +184,7 @@ func TestIntegrationRecognizesMultiCommitSquashAgainstRemoteBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, err := Integration(context.Background(), root, resolved.OID)
+	status, err := IntegrationWithComparison(context.Background(), root, resolved)
 	if err != nil {
 		t.Fatal(err)
 	}

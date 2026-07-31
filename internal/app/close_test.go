@@ -24,8 +24,8 @@ func TestCloseUnknownWorktreeErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected close to fail for a name not in Forest state")
 	}
-	if !strings.Contains(err.Error(), "unknown worktree ghost") {
-		t.Fatalf("error = %q, want it to name the unknown worktree", err)
+	if !strings.Contains(err.Error(), `worktree "ghost" not found`) {
+		t.Fatalf("error = %q, want an explicit not-found diagnostic", err)
 	}
 
 	list, err := application.List(context.Background(), ListOptions{Fast: true})

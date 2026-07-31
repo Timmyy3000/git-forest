@@ -239,7 +239,6 @@ func ResolveComparisonRef(ctx context.Context, root, base string) (ComparisonRef
 		candidates = []candidate{
 			{ref: "origin/" + base, source: "remote-tracking"},
 			{ref: "refs/heads/" + base, source: "local"},
-			{ref: base, source: "local"},
 		}
 	}
 

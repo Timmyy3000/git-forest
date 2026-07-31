@@ -407,7 +407,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			view.Behind = checks.behind
 			view.Integration = checks.integration
 			view.IntegrationError = checks.integrationError
-			if view.IntegrationError != "" {
+			if checks.incomplete {
 				view.BaseRef = ""
 				view.ComparisonSource = ""
 			}
@@ -885,7 +885,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
 		}
 		if opts.Name != "" && !matched {
-			return fmt.Errorf("unknown worktree %s (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
+			return fmt.Errorf("worktree %q not found in Forest state (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
 		}
 		store.Worktrees = kept
 		return state.Save(root, store)
