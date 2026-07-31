@@ -104,6 +104,50 @@ func TestCloseDirtyWithoutIncludeDirtySkips(t *testing.T) {
 	}
 }
 
+func TestCloseWithoutYesReportsDirty(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "dirty-no-yes", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(added.Path, "scratch.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Name: added.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Reason != "dirty" {
+		t.Fatalf("close skipped = %+v, want dirty diagnostic", result.Skipped)
+	}
+}
+
+func TestCloseWithoutYesReportsUnmerged(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "unmerged-no-yes", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTestFile(t, added.Path, "active.txt", "work in progress\n", "active change")
+
+	result, err := application.Close(context.Background(), CloseOptions{Name: added.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Reason != "unmerged" {
+		t.Fatalf("close skipped = %+v, want unmerged diagnostic", result.Skipped)
+	}
+}
+
 func TestCloseMergedSkipsUnmergedWorktrees(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

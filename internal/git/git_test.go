@@ -132,6 +132,13 @@ func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) 
 	if resolved.Ref != "refs/heads/main" || resolved.Source != "local" {
 		t.Fatalf("qualified fallback resolved = %+v, want refs/heads/main from local", resolved)
 	}
+	resolved, err = ResolveComparisonRef(context.Background(), root, "refs/remotes/origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Ref != "refs/heads/main" || resolved.Source != "local" {
+		t.Fatalf("fully-qualified fallback resolved = %+v, want refs/heads/main from local", resolved)
+	}
 
 	runGit(t, root, "commit", "--allow-empty", "-m", "branch tip")
 	runGit(t, root, "tag", "main", "HEAD^")

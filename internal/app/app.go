@@ -792,6 +792,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			return err
 		}
 		var kept []state.Worktree
+		comparisons := make(map[string]comparisonResult, len(store.Worktrees))
 		matched := false
 		for _, wt := range store.Worktrees {
 			matchesName := wt.ID == opts.Name || wt.Name == opts.Name || wt.Branch == opts.Name
@@ -804,11 +805,6 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			matched = true
-			if !opts.Yes {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "requires --yes"})
-				kept = append(kept, wt)
-				continue
-			}
 			abs := filepath.Join(root, wt.Path)
 			if _, statErr := os.Stat(abs); statErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
@@ -826,9 +822,14 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			comparison, comparisonErr := git.ResolveComparisonRef(ctx, root, wt.Base)
-			if comparisonErr != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + comparisonErr.Error()})
+			comparison, ok := comparisons[wt.Base]
+			if !ok {
+				resolved, comparisonErr := git.ResolveComparisonRef(ctx, root, wt.Base)
+				comparison = comparisonResult{ref: resolved, err: comparisonErr}
+				comparisons[wt.Base] = comparison
+			}
+			if comparison.err != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + comparison.err.Error()})
 				kept = append(kept, wt)
 				continue
 			}
@@ -838,9 +839,9 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				// An empty branch is corrupted state. Resolve HEAD from the
 				// worktree itself; resolving HEAD from root would inspect the
 				// repository's primary worktree instead.
-				integrated, integrationErr = git.IntegrationWithComparison(ctx, abs, comparison)
+				integrated, integrationErr = git.IntegrationWithComparison(ctx, abs, comparison.ref)
 			} else {
-				integrated, integrationErr = git.IntegrationRefWithComparison(ctx, root, comparison, wt.Branch)
+				integrated, integrationErr = git.IntegrationRefWithComparison(ctx, root, comparison.ref, wt.Branch)
 			}
 			if integrationErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
@@ -852,9 +853,6 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			if opts.Merged && opts.IncludeUnmerged && integrated == "unmerged" {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: closing unmerged worktree because --include-unmerged was specified", wt.Name))
-			}
 			if opts.Merged && !isMergedIntegration(integrated) && !(opts.IncludeUnmerged && integrated == "unmerged") {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "not merged"})
 				kept = append(kept, wt)
@@ -864,6 +862,14 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "unmerged"})
 				kept = append(kept, wt)
 				continue
+			}
+			if !opts.Yes {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "requires --yes"})
+				kept = append(kept, wt)
+				continue
+			}
+			if opts.Merged && opts.IncludeUnmerged && integrated == "unmerged" {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: closing unmerged worktree because --include-unmerged was specified", wt.Name))
 			}
 			if err := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty); err != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: err.Error()})

@@ -50,6 +50,7 @@ func BenchmarkIntegrationAcrossWorktrees(b *testing.B) {
 	benchmarkGit(b, root, "add", "README.md")
 	benchmarkGit(b, root, "commit", "-m", "init")
 	benchmarkGit(b, root, "branch", "-M", "main")
+	benchmarkGit(b, root, "update-ref", "refs/remotes/origin/main", "HEAD")
 
 	const worktreeCount = 5
 	paths := make([]string, 0, worktreeCount)
@@ -64,11 +65,15 @@ func BenchmarkIntegrationAcrossWorktrees(b *testing.B) {
 		benchmarkGit(b, path, "commit", "-m", "change")
 		paths = append(paths, path)
 	}
+	comparison, err := git.ResolveComparisonRef(context.Background(), root, "main")
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for b.Loop() {
 		for _, path := range paths {
-			if status, err := git.Integration(context.Background(), path, "main"); err != nil || status == "" {
+			if status, err := git.IntegrationWithComparison(context.Background(), path, comparison); err != nil || status == "" {
 				b.Fatalf("integration status=%q err=%v", status, err)
 			}
 		}
