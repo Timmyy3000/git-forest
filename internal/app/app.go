@@ -172,6 +172,11 @@ type gitWorktreeRegistry struct {
 	LoadErr error
 }
 
+type untrackedWorktree struct {
+	ID     string
+	Status string
+}
+
 type worktreeEvidence struct {
 	PathExists   bool
 	IsDirectory  bool
@@ -1014,6 +1019,11 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 					continue
 				}
 				if evidence.staleResidual() {
+					if err := safeResidualPath(root, abs); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
 					if err := ensureEmptyResidualDirectory(abs); err != nil {
 						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
 						kept = append(kept, wt)
@@ -1021,8 +1031,8 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 					}
 				}
 				if evidence.Registration != nil {
-					if err := safeResidualPath(root, abs); err != nil {
-						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
+					if err := safeResidualPath(root, evidence.Registration.Path); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale Git registration: " + err.Error()})
 						kept = append(kept, wt)
 						continue
 					}
@@ -1182,8 +1192,8 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			return nil
 		}
 		adopted, untracked := a.reconcileGitWorktreesWithRegistry(ctx, root, &store, registry, fix && canMutate)
-		for _, id := range untracked {
-			checks = append(checks, Check{Name: "worktree " + id, Status: "untracked by Forest state; run forest doctor --fix to adopt"})
+		for _, worktree := range untracked {
+			checks = append(checks, Check{Name: "worktree " + worktree.ID, Status: worktree.Status})
 		}
 		if adopted > 0 {
 			checks = append(checks, Check{Name: "worktree adoption", Status: fmt.Sprintf("adopted %d git worktree(s)", adopted)})
@@ -1351,7 +1361,7 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	return DoctorResult{Checks: checks}, nil
 }
 
-func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []string, error) {
+func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []untrackedWorktree, error) {
 	registry := loadGitWorktreeRegistry(ctx, root)
 	if registry.LoadErr != nil {
 		return 0, nil, registry.LoadErr
@@ -1360,13 +1370,13 @@ func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *sta
 	return adopted, untracked, nil
 }
 
-func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string, store *state.Store, registry gitWorktreeRegistry, adopt bool) (int, []string) {
+func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string, store *state.Store, registry gitWorktreeRegistry, adopt bool) (int, []untrackedWorktree) {
 	now := time.Now().UTC()
 	base := store.DefaultBase
 	if base == "" {
 		base = git.DefaultBranch(ctx, root)
 	}
-	var untracked []string
+	var untracked []untrackedWorktree
 	adopted := 0
 	for _, wt := range registry.Entries {
 		if wt.Prunable {
@@ -1384,14 +1394,32 @@ func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string
 		if stateHasPath(*store, root, wt.Path) {
 			continue
 		}
-		untracked = append(untracked, identity)
 		evidence := inspectWorktree(wt.Path, registry)
 		if !evidence.healthy() {
+			untracked = append(untracked, untrackedWorktree{
+				ID:     identity,
+				Status: "untracked by Forest state; adoption skipped: " + invalidWorktreeReason(evidence, registry.LoadErr),
+			})
 			continue
 		}
-		if !adopt || stateHasHealthyBranch(*store, root, registry, branch) {
+		if !adopt {
+			untracked = append(untracked, untrackedWorktree{
+				ID:     identity,
+				Status: "untracked by Forest state; run forest doctor --fix to adopt",
+			})
 			continue
 		}
+		if stateHasHealthyBranch(*store, root, registry, branch) {
+			untracked = append(untracked, untrackedWorktree{
+				ID:     identity,
+				Status: "untracked by Forest state; adoption skipped because a healthy worktree already uses this branch",
+			})
+			continue
+		}
+		untracked = append(untracked, untrackedWorktree{
+			ID:     identity,
+			Status: "untracked by Forest state; adopting",
+		})
 		store.Worktrees = append(store.Worktrees, state.Worktree{
 			ID:        identity,
 			Name:      identity,

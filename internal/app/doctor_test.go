@@ -115,7 +115,7 @@ func TestReconcileReportsUntrackedUnhealthyGitWorktree(t *testing.T) {
 	}
 	store := state.NewStore(root)
 	_, untracked := New().reconcileGitWorktreesWithRegistry(context.Background(), root, &store, registry, false)
-	if len(untracked) != 1 || untracked[0] != "feature/unhealthy" {
+	if len(untracked) != 1 || untracked[0].ID != "feature/unhealthy" || !strings.Contains(untracked[0].Status, "path is not a directory") {
 		t.Fatalf("untracked = %#v, want unhealthy Forest-scoped registration", untracked)
 	}
 }
