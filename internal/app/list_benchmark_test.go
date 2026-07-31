@@ -75,6 +75,24 @@ func BenchmarkIntegrationAcrossWorktrees(b *testing.B) {
 	}
 }
 
+func BenchmarkResolveComparisonRef(b *testing.B) {
+	root := b.TempDir()
+	benchmarkGit(b, root, "init")
+	benchmarkGit(b, root, "config", "user.email", "test@example.com")
+	benchmarkGit(b, root, "config", "user.name", "Forest Benchmark")
+	benchmarkGit(b, root, "commit", "--allow-empty", "-m", "init")
+	benchmarkGit(b, root, "branch", "-M", "main")
+	benchmarkGit(b, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+	b.ResetTimer()
+	for b.Loop() {
+		resolved, err := git.ResolveComparisonRef(context.Background(), root, "main")
+		if err != nil || resolved.Ref != "origin/main" || resolved.OID == "" {
+			b.Fatalf("resolved=%+v err=%v", resolved, err)
+		}
+	}
+}
+
 func benchmarkGit(b *testing.B, dir string, args ...string) {
 	b.Helper()
 	cmd := exec.Command("git", args...)

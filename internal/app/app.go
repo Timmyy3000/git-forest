@@ -852,6 +852,9 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
+			if opts.Merged && opts.IncludeUnmerged && integrated == "unmerged" {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: closing unmerged worktree because --include-unmerged was specified", wt.Name))
+			}
 			if opts.Merged && !isMergedIntegration(integrated) && !(opts.IncludeUnmerged && integrated == "unmerged") {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "not merged"})
 				kept = append(kept, wt)

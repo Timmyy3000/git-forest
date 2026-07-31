@@ -138,6 +138,30 @@ func TestCloseMergedSkipsUnmergedWorktrees(t *testing.T) {
 	}
 }
 
+func TestCloseMergedIncludeUnmergedWarns(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "active", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTestFile(t, added.Path, "active.txt", "work in progress\n", "active change")
+
+	result, err := application.Close(context.Background(), CloseOptions{Merged: true, IncludeUnmerged: true, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || result.Closed[0] != added.Name {
+		t.Fatalf("close result = %+v, want unmerged worktree closed", result)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "closing unmerged") {
+		t.Fatalf("close warnings = %v, want explicit unmerged warning", result.Warnings)
+	}
+}
+
 func TestCloseMergedHonorsName(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")
