@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type WorktreeInfo struct {
@@ -232,6 +233,9 @@ func ValidateRevision(value string) error {
 	}
 	if strings.HasPrefix(value, "-") {
 		return fmt.Errorf("invalid revision %q: values beginning with '-' are not allowed", value)
+	}
+	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return fmt.Errorf("invalid revision %q: control characters are not allowed", value)
 	}
 	return nil
 }

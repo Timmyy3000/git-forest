@@ -375,6 +375,13 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	if wt.BaseRef != "" || wt.ComparisonSource != "" {
 		t.Fatalf("failed integration should omit comparison metadata, got baseRef=%q source=%q", wt.BaseRef, wt.ComparisonSource)
 	}
+	detailed, err := application.List(context.Background(), ListOptions{Name: added.Name, Detailed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detailed.Worktrees[0].Dirty {
+		t.Fatal("inaccessible worktree must not be reported as dirty")
+	}
 }
 
 func TestCloseReportsInaccessibleWorktree(t *testing.T) {
@@ -501,7 +508,7 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	checksCh := make(chan gitChecks, 1)
-	go func() { checksCh <- collectGitChecksAt(ctx, root, root, "main", "") }()
+	go func() { checksCh <- collectGitChecksAt(ctx, root, root, "main", "", true) }()
 	cancel()
 	checks := <-checksCh
 

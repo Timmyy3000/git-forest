@@ -128,3 +128,30 @@ func TestCloseMergedSkipsUnmergedWorktrees(t *testing.T) {
 		t.Fatalf("worktree directory must survive, stat err = %v", err)
 	}
 }
+
+func TestCloseMergedHonorsName(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	first, err := application.Add(context.Background(), AddOptions{Name: "first", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := application.Add(context.Background(), AddOptions{Name: "second", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Merged: true, Name: first.Name, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || result.Closed[0] != first.Name {
+		t.Fatalf("merged close = %+v, want only %q closed", result, first.Name)
+	}
+	if _, err := os.Stat(second.Path); err != nil {
+		t.Fatalf("non-selected worktree must survive, stat err = %v", err)
+	}
+}

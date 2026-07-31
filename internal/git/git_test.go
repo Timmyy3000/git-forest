@@ -229,6 +229,12 @@ func TestIntegrationRejectsOptionLikeBase(t *testing.T) {
 	}
 }
 
+func TestValidateRevisionRejectsControlCharacters(t *testing.T) {
+	if err := ValidateRevision("main\nfeature"); err == nil {
+		t.Fatal("expected control characters to be rejected")
+	}
+}
+
 func TestAheadBehindWithErrorRejectsInvalidBase(t *testing.T) {
 	root := initRepo(t)
 	for _, base := range []string{"", "--git-dir=outside"} {
