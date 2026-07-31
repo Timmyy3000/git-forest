@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Timmyy3000/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/git"
 	"github.com/Timmyy3000/git-forest/internal/pathutil"
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
@@ -92,6 +93,30 @@ func TestDoctorFixAdoptsGitWorktreeMissingFromState(t *testing.T) {
 	}
 	if wt.Branch != "feature/orphan" || wt.Path != filepath.Join(config.WorktreeDir, "feature", "orphan") {
 		t.Fatalf("unexpected adopted worktree: %#v", wt)
+	}
+}
+
+func TestReconcileReportsUntrackedUnhealthyGitWorktree(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "unhealthy")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a worktree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := git.WorktreeInfo{Path: path, Branch: "feature/unhealthy"}
+	registry := gitWorktreeRegistry{
+		Entries: []git.WorktreeInfo{entry},
+		ByPath:  map[string]git.WorktreeInfo{worktreePathKey(path): entry},
+	}
+	store := state.NewStore(root)
+	_, untracked := New().reconcileGitWorktreesWithRegistry(context.Background(), root, &store, registry, false)
+	if len(untracked) != 1 || untracked[0] != "feature/unhealthy" {
+		t.Fatalf("untracked = %#v, want unhealthy Forest-scoped registration", untracked)
 	}
 }
 

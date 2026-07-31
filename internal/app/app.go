@@ -1376,10 +1376,6 @@ func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string
 		if !ok || !validStatePath(filepath.Join(config.WorktreeDir, rel)) {
 			continue
 		}
-		evidence := inspectWorktree(wt.Path, registry)
-		if !evidence.healthy() {
-			continue
-		}
 		identity := filepath.ToSlash(rel)
 		branch := wt.Branch
 		if branch == "" {
@@ -1389,6 +1385,10 @@ func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string
 			continue
 		}
 		untracked = append(untracked, identity)
+		evidence := inspectWorktree(wt.Path, registry)
+		if !evidence.healthy() {
+			continue
+		}
 		if !adopt || stateHasHealthyBranch(*store, root, registry, branch) {
 			continue
 		}
