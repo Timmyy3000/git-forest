@@ -194,4 +194,54 @@ func TestCloseMergedHonorsName(t *testing.T) {
 	if _, _, ok := store.Find(second.Name); !ok {
 		t.Fatalf("non-selected worktree %q must remain in state", second.Name)
 	}
+	if _, _, ok := store.Find(first.Name); ok {
+		t.Fatalf("closed worktree %q remains in state", first.Name)
+	}
+}
+
+func TestCloseWithMissingBranchUsesWorktreeHead(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "missing-branch", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Worktrees[0].Branch = ""
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	head := runGitOutput(t, added.Path, "rev-parse", "HEAD")
+	baseHead := runGitOutput(t, root, "rev-parse", "refs/heads/main")
+	if head != baseHead {
+		t.Fatalf("worktree HEAD = %q, want main branch tip %q", head, baseHead)
+	}
+	listed, err := application.List(context.Background(), ListOptions{Name: added.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.Worktrees[0].Integration != "merged" || listed.Worktrees[0].IntegrationError != "" {
+		t.Fatalf("list integration = %q (%q), want merged without error", listed.Worktrees[0].Integration, listed.Worktrees[0].IntegrationError)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Name: added.Name, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || result.Closed[0] != added.Name {
+		t.Fatalf("close result = %+v, want %q closed", result, added.Name)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find(added.Name); ok {
+		t.Fatalf("closed worktree %q remains in state", added.Name)
+	}
 }

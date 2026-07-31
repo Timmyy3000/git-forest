@@ -367,7 +367,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		}
 		comparison, ok := comparisons[wt.Base]
 		if !ok {
-			comparison.err = fmt.Errorf("missing comparison ref")
+			comparison.err = fmt.Errorf("missing comparison ref for worktree %q (base %q)", wt.Name, wt.Base)
 		}
 		if comparison.err != nil {
 			view.Integration = "unknown"
@@ -847,7 +847,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			if opts.Merged && integrated == "unknown" {
+			if integrated == "unknown" {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown"})
 				kept = append(kept, wt)
 				continue

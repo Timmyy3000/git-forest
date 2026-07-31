@@ -227,11 +227,10 @@ func ResolveComparisonRef(ctx context.Context, root, base string) (ComparisonRef
 			{ref: "refs/heads/" + local, source: "local"},
 		}
 	case strings.HasPrefix(base, "refs/remotes/"):
-		local := strings.TrimPrefix(base, "refs/remotes/")
-		local = strings.TrimPrefix(local, "origin/")
-		candidates = []candidate{
-			{ref: base, source: "remote-tracking"},
-			{ref: "refs/heads/" + local, source: "local"},
+		candidates = []candidate{{ref: base, source: "remote-tracking"}}
+		remote := strings.TrimPrefix(base, "refs/remotes/")
+		if strings.HasPrefix(remote, "origin/") {
+			candidates = append(candidates, candidate{ref: "refs/heads/" + strings.TrimPrefix(remote, "origin/"), source: "local"})
 		}
 	case strings.HasPrefix(base, "refs/"):
 		// Fully-qualified local refs should be resolved as requested rather
