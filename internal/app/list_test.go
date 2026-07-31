@@ -73,6 +73,44 @@ func TestListDefaultRefreshesIntegrationButSkipsDetails(t *testing.T) {
 	}
 }
 
+func TestListReportsComparisonRefResolutionFailure(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "missing-base", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Worktrees[0].Base = "does-not-exist"
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.List(context.Background(), ListOptions{Name: added.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Worktrees) != 1 {
+		t.Fatalf("worktrees = %d, want 1", len(result.Worktrees))
+	}
+	view := result.Worktrees[0]
+	if view.Integration != "unknown" {
+		t.Fatalf("integration = %q, want unknown", view.Integration)
+	}
+	if !strings.Contains(view.IntegrationError, "does-not-exist") {
+		t.Fatalf("integration error = %q, want missing base", view.IntegrationError)
+	}
+	if !view.ChecksIncomplete || !view.DetailsSkipped {
+		t.Fatalf("comparison failure flags = incomplete:%t details-skipped:%t, want both true", view.ChecksIncomplete, view.DetailsSkipped)
+	}
+}
+
 func TestListAndClosePreferOriginBaseForSquashedWorktree(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

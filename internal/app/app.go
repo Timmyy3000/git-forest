@@ -364,7 +364,17 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			views[i] = view
 			continue
 		}
-		comparison := comparisons[wt.Base]
+		comparison, ok := comparisons[wt.Base]
+		if !ok {
+			view.Integration = "unknown"
+			view.IntegrationError = "missing comparison ref"
+			view.ChecksIncomplete = true
+			if !opts.Detailed {
+				view.DetailsSkipped = true
+			}
+			views[i] = view
+			continue
+		}
 		if comparison.err != nil {
 			view.Integration = "unknown"
 			view.IntegrationError = comparison.err.Error()
@@ -783,6 +793,11 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			}
 			matched = true
 			abs := filepath.Join(root, wt.Path)
+			if _, statErr := os.Stat(abs); statErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
 			dirty, dirtyErr := git.Dirty(ctx, abs)
 			if dirtyErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + dirtyErr.Error()})
@@ -791,11 +806,6 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			}
 			if dirty && !opts.IncludeDirty {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "dirty"})
-				kept = append(kept, wt)
-				continue
-			}
-			if _, statErr := os.Stat(abs); statErr != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
 				kept = append(kept, wt)
 				continue
 			}
