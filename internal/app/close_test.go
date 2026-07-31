@@ -101,3 +101,30 @@ func TestCloseDirtyWithoutIncludeDirtySkips(t *testing.T) {
 		t.Fatalf("worktree directory must survive, stat err = %v", err)
 	}
 }
+
+func TestCloseMergedSkipsUnmergedWorktrees(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "active", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTestFile(t, added.Path, "active.txt", "work in progress\n", "active change")
+
+	result, err := application.Close(context.Background(), CloseOptions{Merged: true, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 0 {
+		t.Fatalf("unmerged worktree must not be closed by --merged, got %v", result.Closed)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Reason != "not merged" {
+		t.Fatalf("expected a not-merged skip, got %+v", result.Skipped)
+	}
+	if _, err := os.Stat(added.Path); err != nil {
+		t.Fatalf("worktree directory must survive, stat err = %v", err)
+	}
+}

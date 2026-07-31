@@ -393,6 +393,10 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			go func(i int, view WorktreeView, repositoryRoot, base, head string) {
 				defer wg.Done()
 				view.Integration, view.IntegrationError = collectIntegrationAt(ctx, view.Path, repositoryRoot, base, head)
+				if view.IntegrationError != "" {
+					view.BaseRef = ""
+					view.ComparisonSource = ""
+				}
 				view.DetailsSkipped = true
 				view.ChecksIncomplete = view.IntegrationError != ""
 				views[i] = view
@@ -408,6 +412,10 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			view.Behind = checks.behind
 			view.Integration = checks.integration
 			view.IntegrationError = checks.integrationError
+			if view.IntegrationError != "" {
+				view.BaseRef = ""
+				view.ComparisonSource = ""
+			}
 			view.CheckError = checks.checkError
 			view.ChecksIncomplete = checks.incomplete
 			if checks.checkError == "" {
@@ -541,14 +549,10 @@ type gitChecks struct {
 	incomplete       bool
 }
 
-// collectGitChecks runs the three per-worktree git checks concurrently.
+// collectGitChecksAt runs the three per-worktree git checks concurrently.
 // Each goroutine writes its own local before the WaitGroup barrier publishes
 // the results; a cancelled context abandons queued checks instead of waiting
 // on a semaphore slot.
-func collectGitChecks(ctx context.Context, path, base string) gitChecks {
-	return collectGitChecksAt(ctx, path, path, base, "")
-}
-
 func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head string) gitChecks {
 	if _, err := os.Stat(path); err != nil {
 		diagnostic := "worktree inaccessible: " + err.Error()
@@ -830,7 +834,12 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			if integrated == "unmerged" && !opts.IncludeUnmerged {
+			if opts.Merged && !isMergedIntegration(integrated) && !(opts.IncludeUnmerged && integrated == "unmerged") {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "not merged"})
+				kept = append(kept, wt)
+				continue
+			}
+			if !opts.Merged && integrated == "unmerged" && !opts.IncludeUnmerged {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "unmerged"})
 				kept = append(kept, wt)
 				continue
@@ -858,6 +867,10 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 		return state.Save(root, store)
 	})
 	return result, err
+}
+
+func isMergedIntegration(integration string) bool {
+	return integration == "merged" || integration == "patch-equivalent"
 }
 
 func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {

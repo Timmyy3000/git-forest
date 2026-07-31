@@ -372,6 +372,9 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	if !wt.ChecksIncomplete {
 		t.Fatal("expected failed integration-only check to be marked incomplete")
 	}
+	if wt.BaseRef != "" || wt.ComparisonSource != "" {
+		t.Fatalf("failed integration should omit comparison metadata, got baseRef=%q source=%q", wt.BaseRef, wt.ComparisonSource)
+	}
 }
 
 func TestCloseReportsInaccessibleWorktree(t *testing.T) {
@@ -498,7 +501,7 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	checksCh := make(chan gitChecks, 1)
-	go func() { checksCh <- collectGitChecks(ctx, root, "main") }()
+	go func() { checksCh <- collectGitChecksAt(ctx, root, root, "main", "") }()
 	cancel()
 	checks := <-checksCh
 
