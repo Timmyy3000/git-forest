@@ -400,7 +400,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 				view.DetailsSkipped = true
 				view.ChecksIncomplete = view.IntegrationError != ""
 				views[i] = view
-			}(i, view, root, comparison.ref.Ref, head)
+			}(i, view, root, comparison.ref.OID, head)
 			continue
 		}
 		wg.Add(1)
@@ -422,7 +422,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 				view.Next = nextAction(checks.dirty, checks.integration, phase)
 			}
 			views[i] = view
-		}(i, view, root, comparison.ref.Ref, head, wt.Activity.Phase)
+		}(i, view, root, comparison.ref.OID, head, wt.Activity.Phase)
 	}
 	wg.Wait()
 	return ListResult{Worktrees: views}, nil
@@ -825,9 +825,9 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				// An empty branch is corrupted state. Resolve HEAD from the
 				// worktree itself; resolving HEAD from root would inspect the
 				// repository's primary worktree instead.
-				integrated, integrationErr = git.Integration(ctx, abs, comparison.Ref)
+				integrated, integrationErr = git.Integration(ctx, abs, comparison.OID)
 			} else {
-				integrated, integrationErr = git.IntegrationRef(ctx, root, comparison.Ref, wt.Branch)
+				integrated, integrationErr = git.IntegrationRef(ctx, root, comparison.OID, wt.Branch)
 			}
 			if integrationErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})

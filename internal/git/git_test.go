@@ -113,6 +113,9 @@ func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) 
 	if resolved.Ref != "origin/main" || resolved.Source != "remote-tracking" {
 		t.Fatalf("resolved = %+v, want origin/main from remote-tracking", resolved)
 	}
+	if resolved.OID != gitOutput(t, root, "rev-parse", resolved.Ref) {
+		t.Fatalf("resolved OID = %q, want current origin/main tip", resolved.OID)
+	}
 
 	resolved, err = ResolveComparisonRef(context.Background(), root, "origin/main")
 	if err != nil {
@@ -133,6 +136,9 @@ func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) 
 		t.Fatalf("fallback resolved = %+v, want refs/heads/main from local", resolved)
 	}
 	branchTip := gitOutput(t, root, "rev-parse", "refs/heads/main")
+	if resolved.OID != branchTip {
+		t.Fatalf("resolved OID = %q, want branch tip %q", resolved.OID, branchTip)
+	}
 	resolvedTip := gitOutput(t, root, "rev-parse", resolved.Ref)
 	if resolvedTip != branchTip {
 		t.Fatalf("resolved tip = %q, want branch tip %q", resolvedTip, branchTip)
@@ -164,7 +170,7 @@ func TestIntegrationRecognizesMultiCommitSquashAgainstRemoteBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, err := Integration(context.Background(), root, resolved.Ref)
+	status, err := Integration(context.Background(), root, resolved.OID)
 	if err != nil {
 		t.Fatal(err)
 	}

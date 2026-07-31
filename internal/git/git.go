@@ -25,6 +25,8 @@ func Run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// Git normally writes diagnostics to stderr, but some commands emit
+		// useful details on stdout when stderr is empty.
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())
@@ -180,6 +182,7 @@ func Fetch(ctx context.Context, root string) error {
 type ComparisonRef struct {
 	Ref    string
 	Source string
+	OID    string
 }
 
 // ResolveComparisonRef prefers the locally available origin tracking ref for
@@ -210,8 +213,8 @@ func ResolveComparisonRef(ctx context.Context, root, base string) (ComparisonRef
 	}
 
 	for _, candidate := range candidates {
-		if _, err := Run(ctx, root, "rev-parse", "--verify", candidate.ref+"^{commit}"); err == nil {
-			return ComparisonRef{Ref: candidate.ref, Source: candidate.source}, nil
+		if oid, err := Run(ctx, root, "rev-parse", "--verify", candidate.ref+"^{commit}"); err == nil {
+			return ComparisonRef{Ref: candidate.ref, Source: candidate.source, OID: oid}, nil
 		}
 	}
 
@@ -296,8 +299,9 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 // the repository directory. This lets callers inspect a managed branch from
 // the primary worktree even when its checked-out worktree is unavailable.
 // Aggregate comparisons use Git's --write-tree mode, which may materialize an
-// unreachable tree object; Git can reclaim those objects during garbage
-// collection, while refs and checked-out worktree files remain untouched.
+// unreachable tree object. Git reclaims those objects according to its normal
+// unreachable-object expiry rules, while refs and checked-out worktree files
+// remain untouched.
 func IntegrationRef(ctx context.Context, root, base, head string) (string, error) {
 	if err := ValidateRevision(base); err != nil {
 		return "unknown", err
