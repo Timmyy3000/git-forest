@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Timmyy3000/git-forest/internal/app"
@@ -38,6 +39,13 @@ func TestJSONFlagWorksForAgentContractCommands(t *testing.T) {
 				t.Fatalf("expected JSON output, got %q: %v", out, err)
 			}
 		})
+	}
+}
+
+func TestCloseMergedRejectsMultipleNames(t *testing.T) {
+	_, err := executeTestCommand("close", "--merged", "first", "second")
+	if err == nil || !strings.Contains(err.Error(), "at most one worktree name") {
+		t.Fatalf("error = %v, want multiple-name validation", err)
 	}
 }
 

@@ -806,6 +806,11 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			matched = true
+			if !opts.Yes {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "requires --yes"})
+				kept = append(kept, wt)
+				continue
+			}
 			abs := filepath.Join(root, wt.Path)
 			if _, statErr := os.Stat(abs); statErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
@@ -854,17 +859,12 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			if !opts.Yes {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "requires --yes"})
-				kept = append(kept, wt)
-				continue
-			}
 			if err := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty); err != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: err.Error()})
 				kept = append(kept, wt)
 				continue
 			}
-			if opts.DeleteBranch {
+			if opts.DeleteBranch && wt.Branch != "" {
 				_ = git.DeleteBranch(ctx, root, wt.Branch)
 			}
 			result.Closed = append(result.Closed, wt.Name)

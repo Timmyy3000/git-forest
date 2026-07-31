@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
 func TestCloseUnknownWorktreeErrors(t *testing.T) {
@@ -126,6 +128,13 @@ func TestCloseMergedSkipsUnmergedWorktrees(t *testing.T) {
 	}
 	if _, err := os.Stat(added.Path); err != nil {
 		t.Fatalf("worktree directory must survive, stat err = %v", err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find(added.Name); !ok {
+		t.Fatalf("skipped worktree %q must remain in state", added.Name)
 	}
 }
 

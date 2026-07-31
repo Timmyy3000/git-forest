@@ -15,6 +15,9 @@ func newCloseCommand(application *app.App) *cobra.Command {
 		Short: "Safely remove a managed worktree",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if opts.Merged {
+				if len(args) > 1 {
+					return fmt.Errorf("close --merged accepts at most one worktree name")
+				}
 				return nil
 			}
 			if len(args) != 1 {
