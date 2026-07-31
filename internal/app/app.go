@@ -805,9 +805,25 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			matched = true
+			if !validStatePath(wt.Path) {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree path"})
+				kept = append(kept, wt)
+				continue
+			}
 			abs := filepath.Join(root, wt.Path)
 			if _, statErr := os.Stat(abs); statErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			inside, pathErr := pathutil.Contains(filepath.Join(root, config.WorktreeDir), abs)
+			if pathErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + pathErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			if !inside {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree path: outside Forest worktree root"})
 				kept = append(kept, wt)
 				continue
 			}
@@ -829,7 +845,11 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				comparisons[wt.Base] = comparison
 			}
 			if comparison.err != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + comparison.err.Error()})
+				reason := "integration unknown: " + comparison.err.Error()
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: reason})
+				if opts.Merged {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not determine integration; worktree was not closed: %v", wt.Name, comparison.err))
+				}
 				kept = append(kept, wt)
 				continue
 			}
@@ -844,12 +864,19 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				integrated, integrationErr = git.IntegrationRefWithComparison(ctx, root, comparison.ref, wt.Branch)
 			}
 			if integrationErr != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
+				reason := "integration unknown: " + integrationErr.Error()
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: reason})
+				if opts.Merged {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not determine integration; worktree was not closed: %v", wt.Name, integrationErr))
+				}
 				kept = append(kept, wt)
 				continue
 			}
 			if integrated == "unknown" {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown"})
+				if opts.Merged {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not determine integration; worktree was not closed", wt.Name))
+				}
 				kept = append(kept, wt)
 				continue
 			}

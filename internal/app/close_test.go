@@ -37,6 +37,71 @@ func TestCloseUnknownWorktreeErrors(t *testing.T) {
 	}
 }
 
+func TestCloseRejectsInvalidStatePath(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "invalid-path", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Worktrees[0].Path = filepath.Join("..", "outside")
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Name: added.Name, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 0 || len(result.Skipped) != 1 || result.Skipped[0].Reason != "invalid worktree path" {
+		t.Fatalf("close result = %+v, want invalid path skipped", result)
+	}
+	if _, err := os.Stat(added.Path); err != nil {
+		t.Fatalf("original worktree must survive invalid state path, stat err = %v", err)
+	}
+}
+
+func TestCloseMergedWarnsWhenComparisonIsUnavailable(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "missing-base", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Worktrees[0].Base = "missing-base"
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Merged: true, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("close result = %+v, want unresolved worktree skipped", result)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "could not determine integration") {
+		t.Fatalf("close warnings = %v, want prominent comparison warning", result.Warnings)
+	}
+	if _, err := os.Stat(added.Path); err != nil {
+		t.Fatalf("worktree must survive unresolved comparison, stat err = %v", err)
+	}
+}
+
 func TestCloseIncludeDirtyForcesRemoval(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

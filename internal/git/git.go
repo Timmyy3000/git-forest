@@ -269,6 +269,11 @@ func ValidateRevision(value string) error {
 	if strings.IndexFunc(value, unicode.IsSpace) >= 0 {
 		return fmt.Errorf("invalid revision %q: whitespace is not allowed", value)
 	}
+	for _, segment := range strings.FieldsFunc(value, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if segment == "." || segment == ".." {
+			return fmt.Errorf("invalid revision %q: path traversal segments are not allowed", value)
+		}
+	}
 	return nil
 }
 

@@ -250,6 +250,11 @@ func TestValidateRevisionRejectsControlCharacters(t *testing.T) {
 	if err := ValidateRevision("main feature"); err == nil {
 		t.Fatal("expected whitespace to be rejected")
 	}
+	for _, revision := range []string{"origin/..", "refs/heads/../main"} {
+		if err := ValidateRevision(revision); err == nil {
+			t.Fatalf("expected path traversal revision %q to be rejected", revision)
+		}
+	}
 }
 
 func TestAheadBehindWithErrorRejectsInvalidBase(t *testing.T) {
