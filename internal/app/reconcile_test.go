@@ -149,6 +149,49 @@ func TestCloseSkipsNonEmptyStaleResidual(t *testing.T) {
 	}
 }
 
+func TestCloseRemovesStaleResidualAndGitRegistration(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "registered-stale")
+	runGit(t, root, "worktree", "add", "-b", "feature/registered-stale", path, "HEAD")
+	if err := os.Remove(filepath.Join(path, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/registered-stale",
+		Name:   "feature/registered-stale",
+		Branch: "feature/registered-stale",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "registered-stale"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Close(context.Background(), CloseOptions{Name: "feature/registered-stale", Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || result.Closed[0] != "feature/registered-stale" {
+		t.Fatalf("close result = %+v, want registered stale worktree closed", result)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale residual remains, stat error = %v", err)
+	}
+	if worktrees := runGitOutput(t, root, "worktree", "list", "--porcelain"); strings.Contains(worktrees, filepath.ToSlash(path)) {
+		t.Fatalf("stale Git registration remains:\n%s", worktrees)
+	}
+}
+
 func TestDoctorFixReportsStateSaveFailureAndReconcilesNextRun(t *testing.T) {
 	root := initGitRepo(t)
 	if err := config.Ensure(root); err != nil {
