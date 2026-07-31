@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
 func TestListDetailedRunsGitChecksAndPreservesOrder(t *testing.T) {
@@ -112,6 +114,16 @@ func TestListAndClosePreferOriginBaseForSquashedWorktree(t *testing.T) {
 	}
 	if len(closed.Closed) != 1 || closed.Closed[0] != "stale" {
 		t.Fatalf("close result = %+v, want stale closed", closed)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find(added.Name); ok {
+		t.Fatalf("closed worktree %q remains in state", added.Name)
+	}
+	if _, err := application.List(context.Background(), ListOptions{Name: added.Name}); err == nil {
+		t.Fatalf("list should reject closed worktree %q", added.Name)
 	}
 }
 

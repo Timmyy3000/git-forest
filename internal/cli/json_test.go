@@ -80,8 +80,8 @@ func TestListJSONMarksIntegrationOnlyChecks(t *testing.T) {
 	if _, ok := worktree["checksSkipped"]; ok {
 		t.Fatalf("checksSkipped should be absent from integration-only list JSON: %+v", worktree)
 	}
-	if worktree["baseRef"] != "main" || worktree["comparisonSource"] != "local" {
-		t.Fatalf("comparison metadata = baseRef=%v source=%v, want main/local", worktree["baseRef"], worktree["comparisonSource"])
+	if worktree["baseRef"] != "refs/heads/main" || worktree["comparisonSource"] != "local" {
+		t.Fatalf("comparison metadata = baseRef=%v source=%v, want refs/heads/main/local", worktree["baseRef"], worktree["comparisonSource"])
 	}
 }
 
@@ -114,12 +114,8 @@ func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
 	}
 	var decoded struct {
 		Repositories []struct {
-			Path      string `json:"path"`
-			Worktrees []struct {
-				Name             string `json:"name"`
-				BaseRef          string `json:"baseRef"`
-				ComparisonSource string `json:"comparisonSource"`
-			} `json:"worktrees"`
+			Path      string           `json:"path"`
+			Worktrees []map[string]any `json:"worktrees"`
 		} `json:"repositories"`
 	}
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
@@ -131,9 +127,14 @@ func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
 	if decoded.Repositories[0].Path != "./child" || decoded.Repositories[1].Path != "./root" {
 		t.Fatalf("repository paths = %+v", decoded.Repositories)
 	}
+	expectedNames := map[string]string{"./child": "child-worktree", "./root": "root-worktree"}
 	for _, repository := range decoded.Repositories {
-		if len(repository.Worktrees) != 1 || repository.Worktrees[0].BaseRef != "main" || repository.Worktrees[0].ComparisonSource != "local" {
-			t.Fatalf("repository %q comparison metadata = %+v, want main/local", repository.Path, repository.Worktrees)
+		if len(repository.Worktrees) != 1 {
+			t.Fatalf("repository %q worktrees = %+v, want one worktree", repository.Path, repository.Worktrees)
+		}
+		name, ok := repository.Worktrees[0]["name"].(string)
+		if !ok || name != expectedNames[repository.Path] {
+			t.Fatalf("repository %q worktree name = %v, want %q", repository.Path, repository.Worktrees[0]["name"], expectedNames[repository.Path])
 		}
 	}
 }

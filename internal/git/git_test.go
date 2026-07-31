@@ -72,6 +72,21 @@ func TestIntegrationClassifiesLiveBranchState(t *testing.T) {
 	})
 }
 
+func TestIntegrationRefUsesNamedHeadFromRepositoryRoot(t *testing.T) {
+	root := initRepo(t)
+	runGit(t, root, "checkout", "-b", "feature")
+	commitFile(t, root, "feature.txt", "feature\n", "feature")
+	runGit(t, root, "checkout", "main")
+
+	status, err := IntegrationRef(context.Background(), root, "main", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "unmerged" {
+		t.Fatalf("status = %q, want unmerged", status)
+	}
+}
+
 func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) {
 	root := initRepo(t)
 	runGit(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -93,12 +108,14 @@ func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) 
 	}
 
 	runGit(t, root, "update-ref", "-d", "refs/remotes/origin/main")
+	runGit(t, root, "commit", "--allow-empty", "-m", "branch tip")
+	runGit(t, root, "tag", "main", "HEAD^")
 	resolved, err = ResolveComparisonRef(context.Background(), root, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Ref != "main" || resolved.Source != "local" {
-		t.Fatalf("fallback resolved = %+v, want main from local", resolved)
+	if resolved.Ref != "refs/heads/main" || resolved.Source != "local" {
+		t.Fatalf("fallback resolved = %+v, want refs/heads/main from local", resolved)
 	}
 }
 

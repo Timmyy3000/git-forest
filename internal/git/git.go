@@ -201,6 +201,7 @@ func ResolveComparisonRef(ctx context.Context, root, base string) (ComparisonRef
 	default:
 		candidates = []candidate{
 			{ref: "origin/" + base, source: "remote-tracking"},
+			{ref: "refs/heads/" + base, source: "local"},
 			{ref: base, source: "local"},
 		}
 	}
@@ -278,18 +279,28 @@ func Diff(ctx context.Context, root string) (string, error) {
 // It keeps the fast per-commit patch check for simple histories, then uses a
 // tree-level merge for merge-containing or otherwise unresolved histories.
 func Integration(ctx context.Context, root, base string) (string, error) {
+	return IntegrationRef(ctx, root, base, "HEAD")
+}
+
+// IntegrationRef reports the relationship between head and base using root as
+// the repository directory. This lets callers inspect a managed branch from
+// the primary worktree even when its checked-out worktree is unavailable.
+func IntegrationRef(ctx context.Context, root, base, head string) (string, error) {
 	if err := ValidateRevision(base); err != nil {
+		return "unknown", err
+	}
+	if err := ValidateRevision(head); err != nil {
 		return "unknown", err
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return "unknown", fmt.Errorf("inspect worktree: %w", err)
+		return "unknown", fmt.Errorf("inspect repository: %w", err)
 	}
 	if !info.IsDir() {
-		return "unknown", fmt.Errorf("inspect worktree: not a directory")
+		return "unknown", fmt.Errorf("inspect repository: not a directory")
 	}
 
-	out, err := Run(ctx, root, "rev-list", "--right-only", "--cherry-pick", "--no-merges", "--count", base+"...HEAD")
+	out, err := Run(ctx, root, "rev-list", "--right-only", "--cherry-pick", "--no-merges", "--count", base+"..."+head)
 	if err != nil {
 		return "unknown", err
 	}
@@ -301,12 +312,12 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 		return "unknown", fmt.Errorf("parse unmerged commit count %q: negative value", out)
 	}
 	if count == 0 {
-		mergeCount, err := rightOnlyMergeCount(ctx, root, base)
+		mergeCount, err := rightOnlyMergeCount(ctx, root, base, head)
 		if err != nil {
 			return "unknown", err
 		}
 		if mergeCount == 0 {
-			ancestor, err := IsAncestor(ctx, root, "HEAD", base)
+			ancestor, err := IsAncestor(ctx, root, head, base)
 			if err != nil {
 				return "unknown", err
 			}
@@ -317,11 +328,11 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 		}
 	}
 
-	return aggregateIntegration(ctx, root, base)
+	return aggregateIntegration(ctx, root, base, head)
 }
 
-func rightOnlyMergeCount(ctx context.Context, root, base string) (int, error) {
-	out, err := Run(ctx, root, "rev-list", "--right-only", "--merges", "--count", base+"...HEAD")
+func rightOnlyMergeCount(ctx context.Context, root, base, head string) (int, error) {
+	out, err := Run(ctx, root, "rev-list", "--right-only", "--merges", "--count", base+"..."+head)
 	if err != nil {
 		return 0, err
 	}
@@ -335,8 +346,8 @@ func rightOnlyMergeCount(ctx context.Context, root, base string) (int, error) {
 	return count, nil
 }
 
-func aggregateIntegration(ctx context.Context, root, base string) (string, error) {
-	stdout, stderr, err := runMergeTree(ctx, root, base)
+func aggregateIntegration(ctx context.Context, root, base, head string) (string, error) {
+	stdout, stderr, err := runMergeTree(ctx, root, base, head)
 	if err != nil {
 		diagnostic := strings.TrimSpace(stderr)
 		if diagnostic == "" {
@@ -348,12 +359,12 @@ func aggregateIntegration(ctx context.Context, root, base string) (string, error
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
-		return "unknown", fmt.Errorf("git merge-tree %s HEAD: %s", base, diagnostic)
+		return "unknown", fmt.Errorf("git merge-tree %s %s: %s", base, head, diagnostic)
 	}
 
 	fields := strings.Fields(stdout)
 	if len(fields) == 0 {
-		return "unknown", fmt.Errorf("git merge-tree %s HEAD returned no tree", base)
+		return "unknown", fmt.Errorf("git merge-tree %s %s returned no tree", base, head)
 	}
 	baseTree, err := Run(ctx, root, "rev-parse", "--verify", base+"^{tree}")
 	if err != nil {
@@ -365,8 +376,8 @@ func aggregateIntegration(ctx context.Context, root, base string) (string, error
 	return "unmerged", nil
 }
 
-func runMergeTree(ctx context.Context, root, base string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, "git", "merge-tree", "--write-tree", base, "HEAD")
+func runMergeTree(ctx context.Context, root, base, head string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "git", "merge-tree", "--write-tree", base, head)
 	cmd.Dir = root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
