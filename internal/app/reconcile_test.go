@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +146,54 @@ func TestCloseSkipsNonEmptyStaleResidual(t *testing.T) {
 	}
 	if _, err := os.Stat(content); err != nil {
 		t.Fatalf("user content was removed: %v", err)
+	}
+}
+
+func TestDoctorFixReportsStateSaveFailureAndReconcilesNextRun(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "save-failure")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/save-failure",
+		Name:   "feature/save-failure",
+		Branch: "feature/save-failure",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "save-failure"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	injected := errors.New("injected state save failure")
+	failing := &App{saveFn: func(string, state.Store) error { return injected }}
+	if _, err := failing.Doctor(context.Background(), true); !errors.Is(err, injected) {
+		t.Fatalf("doctor error = %v, want injected save failure", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("empty residual path should be removed before save failure, stat error = %v", err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("feature/save-failure"); !ok {
+		t.Fatal("failed save should leave the old record for next-run reconciliation")
+	}
+
+	if _, err := New().Doctor(context.Background(), true); err != nil {
+		t.Fatalf("next doctor --fix failed: %v", err)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("feature/save-failure"); ok {
+		t.Fatal("next doctor --fix should remove the already-missing stale record")
 	}
 }

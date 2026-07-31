@@ -35,7 +35,7 @@ func Contains(parent, child string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		parent = strings.ToLower(parent)
 		child = strings.ToLower(child)
 	}
@@ -71,7 +71,7 @@ func NormalizePath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		cleaned = strings.ToLower(cleaned)
 	}
 	return filepath.Clean(cleaned), nil
@@ -99,7 +99,7 @@ func resolveExistingPrefix(path string) (string, error) {
 
 func collisionKey(path string) string {
 	path = filepath.Clean(path)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		return strings.ToLower(path)
 	}
 	return path

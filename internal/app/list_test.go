@@ -343,6 +343,13 @@ func TestStatusDiffRequiresName(t *testing.T) {
 	}
 }
 
+func TestStatusDiffRejectsFastMode(t *testing.T) {
+	_, err := New().Status(context.Background(), StatusOptions{Name: "feature", Diff: true, Fast: true})
+	if err == nil || !strings.Contains(err.Error(), "cannot be used with --fast") {
+		t.Fatalf("error = %v, want fast/diff incompatibility", err)
+	}
+}
+
 func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")

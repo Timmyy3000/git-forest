@@ -319,6 +319,13 @@ func TestDoctorFixNeverRemovesPathOutsideForestWorktrees(t *testing.T) {
 	if _, err := os.Stat(outside); err != nil {
 		t.Fatalf("doctor removed or changed outside path: %v", err)
 	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("unsafe"); !ok {
+		t.Fatal("unsafe state record should remain for manual review")
+	}
 }
 
 func TestDoctorFixLeavesValidDirtyWorktreeUntouched(t *testing.T) {

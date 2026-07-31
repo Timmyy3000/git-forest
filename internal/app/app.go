@@ -17,9 +17,18 @@ import (
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
-type App struct{}
+type App struct {
+	saveFn func(string, state.Store) error
+}
 
-func New() *App { return &App{} }
+func New() *App { return &App{saveFn: state.Save} }
+
+func (a *App) saveStore(root string, store state.Store) error {
+	if a.saveFn != nil {
+		return a.saveFn(root, store)
+	}
+	return state.Save(root, store)
+}
 
 type InitResult struct {
 	ForestDir string   `json:"forestDir"`
@@ -409,7 +418,7 @@ func (a *App) Init(ctx context.Context) (InitResult, error) {
 		return InitResult{}, err
 	}
 	store.DefaultBase = git.DefaultBranch(ctx, root)
-	if err := state.Save(root, store); err != nil {
+	if err := a.saveStore(root, store); err != nil {
 		return InitResult{}, err
 	}
 	result := InitResult{ForestDir: filepath.Join(root, config.ForestDir)}
@@ -488,7 +497,7 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			Status:    state.Status{LastKnown: "creating", LastCheckedAt: now},
 		}
 		store.Worktrees = append(store.Worktrees, worktree)
-		if err := state.Save(root, store); err != nil {
+		if err := a.saveStore(root, store); err != nil {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "creating", ID: mapping.Identity})
@@ -497,7 +506,7 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 		if _, idx, ok := store.Find(mapping.Identity); ok {
 			store.Worktrees[idx] = worktree
 		}
-		if err := state.Save(root, store); err != nil {
+		if err := a.saveStore(root, store); err != nil {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "created", ID: mapping.Identity})
@@ -713,7 +722,7 @@ func samePath(left, right string) bool {
 	if err != nil {
 		return false
 	}
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
@@ -894,7 +903,7 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		}
 		wt.Activity.LastSeenAt = now
 		store.Worktrees[idx] = wt
-		if err := state.Save(root, store); err != nil {
+		if err := a.saveStore(root, store); err != nil {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "marked", ID: wt.ID, Detail: opts.Phase})
@@ -1079,7 +1088,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			return fmt.Errorf("unknown worktree %s (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
 		}
 		store.Worktrees = kept
-		return state.Save(root, store)
+		return a.saveStore(root, store)
 	})
 	return result, err
 }
@@ -1187,7 +1196,6 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		for _, wt := range store.Worktrees {
 			keep := true
 			if !validStatePath(wt.Path) {
-				keep = false
 				checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
 				stateHealthy = false
 			} else {
@@ -1307,7 +1315,7 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		}
 		if fix && canMutate && (removed > 0 || changed > 0) {
 			store.Worktrees = kept
-			if err := state.Save(root, store); err != nil {
+			if err := a.saveStore(root, store); err != nil {
 				return err
 			}
 		}
@@ -1411,7 +1419,7 @@ func validStatePath(path string) bool {
 	}
 	clean := filepath.Clean(path)
 	worktreeRoot := filepath.Clean(config.WorktreeDir)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		clean = strings.ToLower(clean)
 		worktreeRoot = strings.ToLower(worktreeRoot)
 	}
