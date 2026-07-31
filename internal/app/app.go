@@ -389,13 +389,9 @@ func ensureEmptyResidualIfPresent(path string) error {
 }
 
 func stateHasPath(store state.Store, root, path string) bool {
-	key, err := pathutil.NormalizePath(path)
-	if err != nil {
-		return false
-	}
+	key := worktreePathKey(path)
 	for _, worktree := range store.Worktrees {
-		statePath, normalizeErr := pathutil.NormalizePath(filepath.Join(root, worktree.Path))
-		if normalizeErr == nil && statePath == key {
+		if worktreePathKey(filepath.Join(root, worktree.Path)) == key {
 			return true
 		}
 	}
@@ -1034,6 +1030,10 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 						continue
 					}
 				}
+				// A stale residual has no .git marker, so Git may refuse to remove
+				// its prunable registration while the empty directory still exists.
+				// removeResidualDirectory rechecks containment and emptiness immediately
+				// before os.Remove; it never recursively deletes user content.
 				if evidence.staleResidual() {
 					if err := removeResidualDirectory(root, abs); err != nil {
 						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
@@ -1236,10 +1236,6 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 				case evidence.staleResidual():
 					stateHealthy = false
 					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "stale residual: folder has no .git marker or valid Git registration"})
-					if err := ensureEmptyResidualDirectory(abs); err != nil {
-						checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "skipped: " + err.Error()})
-						break
-					}
 					keep = false
 					if fix && canMutate {
 						cleanupAllowed := true
@@ -1252,6 +1248,13 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 								cleanupAllowed = false
 								keep = true
 								checks = append(checks, Check{Name: "worktree " + wt.ID + " Git cleanup", Status: "failed: " + err.Error()})
+							}
+						}
+						if cleanupAllowed {
+							if err := ensureEmptyResidualDirectory(abs); err != nil {
+								cleanupAllowed = false
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "skipped: " + err.Error()})
 							}
 						}
 						if cleanupAllowed {
@@ -1320,16 +1323,19 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 					if info, statErr := os.Stat(entry.Path); statErr == nil {
 						hadResidual = info.IsDir()
 					}
-					if err := removeResidualDirectory(root, entry.Path); err != nil {
-						checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "skipped: " + err.Error()})
-					} else if err := git.WorktreeRemove(ctx, root, entry.Path, true); err != nil {
+					if hadResidual {
+						if err := removeResidualDirectory(root, entry.Path); err != nil {
+							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "skipped: " + err.Error()})
+							continue
+						} else {
+							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "removed"})
+						}
+					}
+					if err := git.WorktreeRemove(ctx, root, entry.Path, true); err != nil {
 						checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "failed: " + err.Error()})
 					} else {
 						cleanedRegistrations[worktreePathKey(entry.Path)] = true
 						changed++
-						if hadResidual {
-							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "removed"})
-						}
 						checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "pruned"})
 					}
 				}
