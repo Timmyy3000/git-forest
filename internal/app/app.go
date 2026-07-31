@@ -368,6 +368,8 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		view.BaseRef = comparison.ref.Ref
 		view.ComparisonSource = comparison.ref.Source
 		if comparison.err != nil {
+			// No comparison ref was resolved, so metadata stays empty and is
+			// omitted from JSON rather than suggesting a ref was used.
 			view.Integration = "unknown"
 			view.IntegrationError = comparison.err.Error()
 			view.ChecksIncomplete = true
@@ -783,18 +785,31 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
+			if _, statErr := os.Stat(abs); statErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
 			comparison, comparisonErr := git.ResolveComparisonRef(ctx, root, wt.Base)
 			if comparisonErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + comparisonErr.Error()})
 				kept = append(kept, wt)
 				continue
 			}
-			if _, statErr := os.Stat(abs); statErr != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
-				kept = append(kept, wt)
-				continue
+			head := wt.Branch
+			if head == "" {
+				head = "HEAD"
 			}
-			integrated, integrationErr := git.IntegrationRef(ctx, root, comparison.Ref, wt.Branch)
+			var integrated string
+			var integrationErr error
+			if wt.Branch == "" {
+				// An empty branch is corrupted state. Resolve HEAD from the
+				// worktree itself; resolving HEAD from root would inspect the
+				// repository's primary worktree instead.
+				integrated, integrationErr = git.Integration(ctx, abs, comparison.Ref)
+			} else {
+				integrated, integrationErr = git.IntegrationRef(ctx, root, comparison.Ref, head)
+			}
 			if integrationErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
 				kept = append(kept, wt)

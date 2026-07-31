@@ -362,6 +362,34 @@ func TestCloseReportsInaccessibleWorktree(t *testing.T) {
 	}
 }
 
+func TestCloseWithMissingBranchUsesWorktreeHead(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "missing-branch", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Worktrees[0].Branch = ""
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.Close(context.Background(), CloseOptions{Name: added.Name, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || result.Closed[0] != added.Name {
+		t.Fatalf("close result = %+v, want %q closed", result, added.Name)
+	}
+}
+
 func TestStatusProvidesDetailedHealthAndNamedDiff(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")
