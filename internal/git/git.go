@@ -174,6 +174,50 @@ func Fetch(ctx context.Context, root string) error {
 	return err
 }
 
+type ComparisonRef struct {
+	Ref    string
+	Source string
+}
+
+// ResolveComparisonRef prefers the locally available origin tracking ref for
+// an unqualified base branch. It never fetches; callers can expose the source
+// so users know whether the comparison used remote-tracking or local history.
+func ResolveComparisonRef(ctx context.Context, root, base string) (ComparisonRef, error) {
+	if err := ValidateRevision(base); err != nil {
+		return ComparisonRef{}, err
+	}
+
+	type candidate struct {
+		ref    string
+		source string
+	}
+	candidates := []candidate{{ref: base, source: "local"}}
+	switch {
+	case strings.HasPrefix(base, "origin/"), strings.HasPrefix(base, "refs/remotes/"):
+		candidates = []candidate{{ref: base, source: "remote-tracking"}}
+	case strings.HasPrefix(base, "refs/"):
+		// Fully-qualified local refs should be resolved as requested rather
+		// than being rewritten to an origin ref.
+	default:
+		candidates = []candidate{
+			{ref: "origin/" + base, source: "remote-tracking"},
+			{ref: base, source: "local"},
+		}
+	}
+
+	for _, candidate := range candidates {
+		if _, err := Run(ctx, root, "rev-parse", "--verify", candidate.ref+"^{commit}"); err == nil {
+			return ComparisonRef{Ref: candidate.ref, Source: candidate.source}, nil
+		}
+	}
+
+	refs := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		refs = append(refs, candidate.ref)
+	}
+	return ComparisonRef{}, fmt.Errorf("comparison base %q is unavailable (tried %s)", base, strings.Join(refs, ", "))
+}
+
 // ValidateRevision rejects values that Git could parse as command options.
 func ValidateRevision(value string) error {
 	if value == "" {
@@ -231,8 +275,8 @@ func Diff(ctx context.Context, root string) (string, error) {
 }
 
 // Integration reports the current local relationship between HEAD and base.
-// It avoids an ancestry walk for active branches by first asking Git whether
-// HEAD contains any non-patch-equivalent commits relative to base.
+// It keeps the fast per-commit patch check for simple histories, then uses a
+// tree-level merge for merge-containing or otherwise unresolved histories.
 func Integration(ctx context.Context, root, base string) (string, error) {
 	if err := ValidateRevision(base); err != nil {
 		return "unknown", err
@@ -256,18 +300,79 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 	if count < 0 {
 		return "unknown", fmt.Errorf("parse unmerged commit count %q: negative value", out)
 	}
-	if count > 0 {
-		return "unmerged", nil
+	if count == 0 {
+		mergeCount, err := rightOnlyMergeCount(ctx, root, base)
+		if err != nil {
+			return "unknown", err
+		}
+		if mergeCount == 0 {
+			ancestor, err := IsAncestor(ctx, root, "HEAD", base)
+			if err != nil {
+				return "unknown", err
+			}
+			if ancestor {
+				return "merged", nil
+			}
+			return "patch-equivalent", nil
+		}
 	}
 
-	ancestor, err := IsAncestor(ctx, root, "HEAD", base)
+	return aggregateIntegration(ctx, root, base)
+}
+
+func rightOnlyMergeCount(ctx context.Context, root, base string) (int, error) {
+	out, err := Run(ctx, root, "rev-list", "--right-only", "--merges", "--count", base+"...HEAD")
+	if err != nil {
+		return 0, err
+	}
+	count, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("parse merge commit count %q: %w", out, err)
+	}
+	if count < 0 {
+		return 0, fmt.Errorf("parse merge commit count %q: negative value", out)
+	}
+	return count, nil
+}
+
+func aggregateIntegration(ctx context.Context, root, base string) (string, error) {
+	stdout, stderr, err := runMergeTree(ctx, root, base)
+	if err != nil {
+		diagnostic := strings.TrimSpace(stderr)
+		if diagnostic == "" {
+			diagnostic = strings.TrimSpace(stdout)
+		}
+		if strings.Contains(diagnostic, "CONFLICT") {
+			return "unmerged", nil
+		}
+		if diagnostic == "" {
+			diagnostic = err.Error()
+		}
+		return "unknown", fmt.Errorf("git merge-tree %s HEAD: %s", base, diagnostic)
+	}
+
+	fields := strings.Fields(stdout)
+	if len(fields) == 0 {
+		return "unknown", fmt.Errorf("git merge-tree %s HEAD returned no tree", base)
+	}
+	baseTree, err := Run(ctx, root, "rev-parse", "--verify", base+"^{tree}")
 	if err != nil {
 		return "unknown", err
 	}
-	if ancestor {
-		return "merged", nil
+	if fields[0] == baseTree {
+		return "patch-equivalent", nil
 	}
-	return "patch-equivalent", nil
+	return "unmerged", nil
+}
+
+func runMergeTree(ctx context.Context, root, base string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "git", "merge-tree", "--write-tree", base, "HEAD")
+	cmd.Dir = root
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
 }
 
 func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, error) {

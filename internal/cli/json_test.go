@@ -80,6 +80,9 @@ func TestListJSONMarksIntegrationOnlyChecks(t *testing.T) {
 	if _, ok := worktree["checksSkipped"]; ok {
 		t.Fatalf("checksSkipped should be absent from integration-only list JSON: %+v", worktree)
 	}
+	if worktree["baseRef"] != "main" || worktree["comparisonSource"] != "local" {
+		t.Fatalf("comparison metadata = baseRef=%v source=%v, want main/local", worktree["baseRef"], worktree["comparisonSource"])
+	}
 }
 
 func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
@@ -113,7 +116,9 @@ func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
 		Repositories []struct {
 			Path      string `json:"path"`
 			Worktrees []struct {
-				Name string `json:"name"`
+				Name             string `json:"name"`
+				BaseRef          string `json:"baseRef"`
+				ComparisonSource string `json:"comparisonSource"`
 			} `json:"worktrees"`
 		} `json:"repositories"`
 	}
@@ -125,6 +130,11 @@ func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
 	}
 	if decoded.Repositories[0].Path != "./child" || decoded.Repositories[1].Path != "./root" {
 		t.Fatalf("repository paths = %+v", decoded.Repositories)
+	}
+	for _, repository := range decoded.Repositories {
+		if len(repository.Worktrees) != 1 || repository.Worktrees[0].BaseRef != "main" || repository.Worktrees[0].ComparisonSource != "local" {
+			t.Fatalf("repository %q comparison metadata = %+v, want main/local", repository.Path, repository.Worktrees)
+		}
 	}
 }
 

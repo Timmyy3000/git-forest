@@ -63,17 +63,19 @@ type StatusOptions struct {
 }
 
 type WorktreeView struct {
-	Name        string    `json:"name"`
-	Branch      string    `json:"branch"`
-	Path        string    `json:"path"`
-	Agent       string    `json:"agent,omitempty"`
-	Phase       string    `json:"phase,omitempty"`
-	Note        string    `json:"note,omitempty"`
-	Updated     time.Time `json:"updated"`
-	Dirty       bool      `json:"dirty"`
-	Ahead       int       `json:"ahead"`
-	Behind      int       `json:"behind"`
-	Integration string    `json:"integration"`
+	Name             string    `json:"name"`
+	Branch           string    `json:"branch"`
+	Path             string    `json:"path"`
+	Agent            string    `json:"agent,omitempty"`
+	Phase            string    `json:"phase,omitempty"`
+	Note             string    `json:"note,omitempty"`
+	Updated          time.Time `json:"updated"`
+	Dirty            bool      `json:"dirty"`
+	Ahead            int       `json:"ahead"`
+	Behind           int       `json:"behind"`
+	Integration      string    `json:"integration"`
+	BaseRef          string    `json:"baseRef,omitempty"`
+	ComparisonSource string    `json:"comparisonSource,omitempty"`
 	// IntegrationError explains why Integration is unknown.
 	IntegrationError string `json:"integrationError,omitempty"`
 	// CheckError captures failures from detailed Git health checks.
@@ -332,6 +334,16 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		return ListResult{}, fmt.Errorf("unknown worktree %s", opts.Name)
 	}
 	views := make([]WorktreeView, len(selected))
+	comparisons := make(map[string]comparisonResult, len(selected))
+	if !opts.Fast {
+		for _, wt := range selected {
+			if _, ok := comparisons[wt.Base]; ok {
+				continue
+			}
+			resolved, resolveErr := git.ResolveComparisonRef(ctx, root, wt.Base)
+			comparisons[wt.Base] = comparisonResult{ref: resolved, err: resolveErr}
+		}
+	}
 	var wg sync.WaitGroup
 	for i, wt := range selected {
 		view := WorktreeView{
@@ -349,6 +361,19 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			views[i] = view
 			continue
 		}
+		comparison := comparisons[wt.Base]
+		view.BaseRef = comparison.ref.Ref
+		view.ComparisonSource = comparison.ref.Source
+		if comparison.err != nil {
+			view.Integration = "unknown"
+			view.IntegrationError = comparison.err.Error()
+			view.ChecksIncomplete = true
+			if !opts.Detailed {
+				view.DetailsSkipped = true
+			}
+			views[i] = view
+			continue
+		}
 		if !opts.Detailed {
 			wg.Add(1)
 			go func(i int, view WorktreeView, base string) {
@@ -357,7 +382,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 				view.DetailsSkipped = true
 				view.ChecksIncomplete = view.IntegrationError != ""
 				views[i] = view
-			}(i, view, wt.Base)
+			}(i, view, comparison.ref.Ref)
 			continue
 		}
 		wg.Add(1)
@@ -375,10 +400,15 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 				view.Next = nextAction(checks.dirty, checks.integration, phase)
 			}
 			views[i] = view
-		}(i, view, wt.Base, wt.Activity.Phase)
+		}(i, view, comparison.ref.Ref, wt.Activity.Phase)
 	}
 	wg.Wait()
 	return ListResult{Worktrees: views}, nil
+}
+
+type comparisonResult struct {
+	ref git.ComparisonRef
+	err error
 }
 
 func discoverForestRoots(ctx context.Context, start string) ([]string, []string, error) {
@@ -718,12 +748,18 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
-			integrated, integrationErr := git.Integration(ctx, abs, wt.Base)
 			if dirty && !opts.IncludeDirty {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "dirty"})
 				kept = append(kept, wt)
 				continue
 			}
+			comparison, comparisonErr := git.ResolveComparisonRef(ctx, root, wt.Base)
+			if comparisonErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + comparisonErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			integrated, integrationErr := git.Integration(ctx, abs, comparison.Ref)
 			if integrationErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
 				kept = append(kept, wt)

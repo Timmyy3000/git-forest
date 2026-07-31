@@ -71,6 +71,50 @@ func TestListDefaultRefreshesIntegrationButSkipsDetails(t *testing.T) {
 	}
 }
 
+func TestListAndClosePreferOriginBaseForSquashedWorktree(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "stale", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTestFile(t, added.Path, "one.txt", "one\n", "one")
+	commitTestFile(t, added.Path, "two.txt", "two\n", "two")
+
+	runGit(t, root, "switch", "-c", "integration")
+	runGit(t, root, "merge", "--squash", added.Branch)
+	runGit(t, root, "commit", "-m", "squash stale")
+	target := strings.TrimSpace(runGitOutput(t, root, "rev-parse", "HEAD"))
+	runGit(t, root, "switch", "main")
+	runGit(t, root, "update-ref", "refs/remotes/origin/main", target)
+
+	result, err := application.List(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Worktrees) != 1 {
+		t.Fatalf("worktrees = %d, want 1", len(result.Worktrees))
+	}
+	view := result.Worktrees[0]
+	if view.Integration != "patch-equivalent" {
+		t.Fatalf("integration = %q, want patch-equivalent", view.Integration)
+	}
+	if view.BaseRef != "origin/main" || view.ComparisonSource != "remote-tracking" {
+		t.Fatalf("comparison = baseRef=%q source=%q, want origin/main/remote-tracking", view.BaseRef, view.ComparisonSource)
+	}
+
+	closed, err := application.Close(context.Background(), CloseOptions{Merged: true, Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed.Closed) != 1 || closed.Closed[0] != "stale" {
+		t.Fatalf("close result = %+v, want stale closed", closed)
+	}
+}
+
 func TestListRecursiveDiscoversForestRepositories(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "root")
@@ -405,7 +449,19 @@ func TestListFastSkipsGitChecks(t *testing.T) {
 	if wt.DetailsSkipped {
 		t.Fatal("metadata-only fast mode should use ChecksSkipped instead")
 	}
+	if wt.BaseRef != "" || wt.ComparisonSource != "" {
+		t.Fatalf("fast mode should omit comparison metadata, got baseRef=%q source=%q", wt.BaseRef, wt.ComparisonSource)
+	}
 	if wt.Name != "speedy" || wt.Agent != "test" {
 		t.Fatalf("state fields should still be populated, got %+v", wt)
 	}
+}
+
+func commitTestFile(t *testing.T, root, name, contents, message string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", name)
+	runGit(t, root, "commit", "-m", message)
 }
