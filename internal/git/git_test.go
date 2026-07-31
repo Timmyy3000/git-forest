@@ -87,6 +87,21 @@ func TestIntegrationRefUsesNamedHeadFromRepositoryRoot(t *testing.T) {
 	}
 }
 
+func TestAheadBehindRefUsesNamedHeadFromRepositoryRoot(t *testing.T) {
+	root := initRepo(t)
+	runGit(t, root, "checkout", "-b", "feature")
+	commitFile(t, root, "feature.txt", "feature\n", "feature")
+	runGit(t, root, "checkout", "main")
+
+	ahead, behind, err := AheadBehindRefWithError(context.Background(), root, "main", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ahead != 1 || behind != 0 {
+		t.Fatalf("ahead/behind = %d/%d, want 1/0", ahead, behind)
+	}
+}
+
 func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) {
 	root := initRepo(t)
 	runGit(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -116,6 +131,11 @@ func TestResolveComparisonRefPrefersOriginAndHandlesQualifiedRefs(t *testing.T) 
 	}
 	if resolved.Ref != "refs/heads/main" || resolved.Source != "local" {
 		t.Fatalf("fallback resolved = %+v, want refs/heads/main from local", resolved)
+	}
+	branchTip := gitOutput(t, root, "rev-parse", "refs/heads/main")
+	resolvedTip := gitOutput(t, root, "rev-parse", resolved.Ref)
+	if resolvedTip != branchTip {
+		t.Fatalf("resolved tip = %q, want branch tip %q", resolvedTip, branchTip)
 	}
 }
 

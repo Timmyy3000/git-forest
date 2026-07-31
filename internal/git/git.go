@@ -244,10 +244,17 @@ func Dirty(ctx context.Context, root string) (bool, error) {
 }
 
 func AheadBehindWithError(ctx context.Context, root, base string) (int, int, error) {
+	return AheadBehindRefWithError(ctx, root, base, "HEAD")
+}
+
+func AheadBehindRefWithError(ctx context.Context, root, base, head string) (int, int, error) {
 	if err := ValidateRevision(base); err != nil {
 		return 0, 0, err
 	}
-	out, err := Run(ctx, root, "rev-list", "--left-right", "--count", base+"...HEAD")
+	if err := ValidateRevision(head); err != nil {
+		return 0, 0, err
+	}
+	out, err := Run(ctx, root, "rev-list", "--left-right", "--count", base+"..."+head)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -285,6 +292,9 @@ func Integration(ctx context.Context, root, base string) (string, error) {
 // IntegrationRef reports the relationship between head and base using root as
 // the repository directory. This lets callers inspect a managed branch from
 // the primary worktree even when its checked-out worktree is unavailable.
+// Aggregate comparisons use Git's --write-tree mode, which may materialize an
+// unreachable tree object; Git can reclaim those objects during garbage
+// collection, while refs and checked-out worktree files remain untouched.
 func IntegrationRef(ctx context.Context, root, base, head string) (string, error) {
 	if err := ValidateRevision(base); err != nil {
 		return "unknown", err
@@ -353,13 +363,10 @@ func aggregateIntegration(ctx context.Context, root, base, head string) (string,
 		if diagnostic == "" {
 			diagnostic = strings.TrimSpace(stdout)
 		}
-		if strings.Contains(diagnostic, "CONFLICT") {
+		if strings.Contains(diagnostic, "CONFLICT") || strings.Contains(err.Error(), "CONFLICT") {
 			return "unmerged", nil
 		}
-		if diagnostic == "" {
-			diagnostic = err.Error()
-		}
-		return "unknown", fmt.Errorf("git merge-tree %s %s: %s", base, head, diagnostic)
+		return "unknown", err
 	}
 
 	fields := strings.Fields(stdout)
@@ -383,7 +390,17 @@ func runMergeTree(ctx context.Context, root, base, head string) (string, string,
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	return stdout.String(), stderr.String(), err
+	if err == nil {
+		return stdout.String(), stderr.String(), nil
+	}
+	if ctx.Err() != nil {
+		return stdout.String(), stderr.String(), fmt.Errorf("git merge-tree %s %s: %w", base, head, ctx.Err())
+	}
+	diagnostic := strings.TrimSpace(stderr.String())
+	if diagnostic == "" {
+		diagnostic = err.Error()
+	}
+	return stdout.String(), stderr.String(), fmt.Errorf("git merge-tree %s %s: %s", base, head, diagnostic)
 }
 
 func IsAncestor(ctx context.Context, root, ancestor, descendant string) (bool, error) {

@@ -365,11 +365,7 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			continue
 		}
 		comparison := comparisons[wt.Base]
-		view.BaseRef = comparison.ref.Ref
-		view.ComparisonSource = comparison.ref.Source
 		if comparison.err != nil {
-			// No comparison ref was resolved, so metadata stays empty and is
-			// omitted from JSON rather than suggesting a ref was used.
 			view.Integration = "unknown"
 			view.IntegrationError = comparison.err.Error()
 			view.ChecksIncomplete = true
@@ -379,10 +375,9 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			views[i] = view
 			continue
 		}
+		view.BaseRef = comparison.ref.Ref
+		view.ComparisonSource = comparison.ref.Source
 		head := wt.Branch
-		if head == "" {
-			head = "HEAD"
-		}
 		if !opts.Detailed {
 			wg.Add(1)
 			go func(i int, view WorktreeView, repositoryRoot, base, head string) {
@@ -541,7 +536,7 @@ type gitChecks struct {
 // the results; a cancelled context abandons queued checks instead of waiting
 // on a semaphore slot.
 func collectGitChecks(ctx context.Context, path, base string) gitChecks {
-	return collectGitChecksAt(ctx, path, path, base, "HEAD")
+	return collectGitChecksAt(ctx, path, path, base, "")
 }
 
 func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head string) gitChecks {
@@ -582,8 +577,20 @@ func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head st
 		}()
 	}
 	run(func() { dirty, dirtyErr = git.Dirty(ctx, path) }, func(err error) { dirtyErr = err })
-	run(func() { ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base) }, func(err error) { aheadErr = err })
-	run(func() { integration, integrateErr = git.IntegrationRef(ctx, repositoryRoot, base, head) }, func(err error) { integrateErr = err })
+	run(func() {
+		if head == "" {
+			ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base)
+			return
+		}
+		ahead, behind, aheadErr = git.AheadBehindRefWithError(ctx, repositoryRoot, base, head)
+	}, func(err error) { aheadErr = err })
+	run(func() {
+		if head == "" {
+			integration, integrateErr = git.Integration(ctx, path, base)
+			return
+		}
+		integration, integrateErr = git.IntegrationRef(ctx, repositoryRoot, base, head)
+	}, func(err error) { integrateErr = err })
 	wg.Wait()
 	if dirtyErr != nil {
 		dirty = true
@@ -616,7 +623,7 @@ func collectGitChecksAt(ctx context.Context, path, repositoryRoot, base, head st
 }
 
 func collectIntegration(ctx context.Context, path, base string) (string, string) {
-	return collectIntegrationAt(ctx, path, path, base, "HEAD")
+	return collectIntegrationAt(ctx, path, path, base, "")
 }
 
 func collectIntegrationAt(ctx context.Context, path, repositoryRoot, base, head string) (string, string) {
@@ -629,7 +636,13 @@ func collectIntegrationAt(ctx context.Context, path, repositoryRoot, base, head 
 	if _, err := os.Stat(path); err != nil {
 		return "unknown", "worktree inaccessible: " + err.Error()
 	}
-	status, err := git.IntegrationRef(ctx, repositoryRoot, base, head)
+	var status string
+	var err error
+	if head == "" {
+		status, err = git.Integration(ctx, path, base)
+	} else {
+		status, err = git.IntegrationRef(ctx, repositoryRoot, base, head)
+	}
 	return status, errorText(err)
 }
 

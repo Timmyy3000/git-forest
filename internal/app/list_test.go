@@ -380,6 +380,18 @@ func TestCloseWithMissingBranchUsesWorktreeHead(t *testing.T) {
 	if err := state.Save(root, store); err != nil {
 		t.Fatal(err)
 	}
+	head := runGitOutput(t, added.Path, "rev-parse", "HEAD")
+	baseHead := runGitOutput(t, root, "rev-parse", "refs/heads/main")
+	if head != baseHead {
+		t.Fatalf("worktree HEAD = %q, want main branch tip %q", head, baseHead)
+	}
+	listed, err := application.List(context.Background(), ListOptions{Name: added.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.Worktrees[0].Integration != "merged" || listed.Worktrees[0].IntegrationError != "" {
+		t.Fatalf("list integration = %q (%q), want merged without error", listed.Worktrees[0].Integration, listed.Worktrees[0].IntegrationError)
+	}
 
 	result, err := application.Close(context.Background(), CloseOptions{Name: added.Name, Yes: true})
 	if err != nil {
