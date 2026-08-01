@@ -282,11 +282,11 @@ func classifyWorktree(e worktreeEvidence, registryErr error) (lifecycle, registr
 	if !e.IsDirectory {
 		return "invalid", registrationStatus, "worktree path is not a directory"
 	}
-	if e.Registration != nil && e.Registration.Prunable {
-		return "stale", registrationStatus, "Git worktree registration is prunable"
-	}
 	if !e.GitMarker {
 		return "stale", registrationStatus, "worktree .git marker is missing"
+	}
+	if e.Registration != nil && e.Registration.Prunable {
+		return "invalid", registrationStatus, "Git worktree registration is prunable"
 	}
 	if e.Registration == nil {
 		return "invalid", registrationStatus, "worktree .git marker exists but Git registration is missing"
@@ -774,10 +774,20 @@ func samePath(left, right string) bool {
 	if err != nil {
 		return false
 	}
+	if left == right {
+		return true
+	}
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	if leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo) {
+		// Filesystem identity handles case-insensitive macOS volumes without
+		// incorrectly folding names on case-sensitive Darwin volumes.
+		return true
+	}
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(left, right)
 	}
-	return left == right
+	return false
 }
 
 func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error) {

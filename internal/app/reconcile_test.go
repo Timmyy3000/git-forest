@@ -9,8 +9,26 @@ import (
 	"testing"
 
 	"github.com/Timmyy3000/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/git"
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
+
+func TestClassifyWorktreeWithPrunableRegistrationAndGitMarkerIsInvalid(t *testing.T) {
+	lifecycle, registrationStatus, reason := classifyWorktree(worktreeEvidence{
+		PathExists:  true,
+		IsDirectory: true,
+		GitMarker:   true,
+		Registration: &git.WorktreeInfo{
+			Prunable: true,
+		},
+	}, nil)
+	if lifecycle != "invalid" || registrationStatus != "prunable" {
+		t.Fatalf("classification = %q/%q, want invalid/prunable", lifecycle, registrationStatus)
+	}
+	if reason != "Git worktree registration is prunable" {
+		t.Fatalf("reason = %q, want prunable registration diagnostic", reason)
+	}
+}
 
 func TestListClassifiesStaleAndFastUnverifiedWorktrees(t *testing.T) {
 	root := initGitRepo(t)
