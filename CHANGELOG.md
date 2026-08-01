@@ -4,6 +4,11 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+## v0.8.0 - 2026-08-01
+
+- Hardened comparison and merge-tree checks by pinning remote base commits, selecting worktree heads deliberately, and surfacing lookup or cancellation failures.
+- Added clearer diagnostics and warnings when closing unmerged worktrees or reusing incomplete comparison metadata.
+
 ## v0.7.0 - 2026-07-15
 
 - Reconciles Forest state, physical worktree folders, `.git` markers, and Git registrations so stale residuals and prunable metadata are diagnosed explicitly.
