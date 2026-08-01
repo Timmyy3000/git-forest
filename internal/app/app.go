@@ -89,7 +89,9 @@ type WorktreeView struct {
 	// RegistrationStatus describes the Git evidence used for lifecycle.
 	RegistrationStatus string `json:"registrationStatus"`
 	// Reason explains stale, invalid, or unverified lifecycle values.
-	Reason string `json:"reason,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	BaseRef          string `json:"baseRef,omitempty"`
+	ComparisonSource string `json:"comparisonSource,omitempty"`
 	// IntegrationError explains why Integration is unknown.
 	IntegrationError string `json:"integrationError,omitempty"`
 	// CheckError captures failures from detailed Git health checks.
@@ -149,8 +151,9 @@ type CloseOptions struct {
 }
 
 type CloseResult struct {
-	Closed  []string  `json:"closed"`
-	Skipped []Skipped `json:"skipped"`
+	Closed   []string  `json:"closed"`
+	Skipped  []Skipped `json:"skipped"`
+	Warnings []string  `json:"warnings,omitempty"`
 }
 
 type Skipped struct {
@@ -596,6 +599,19 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		return ListResult{}, fmt.Errorf("unknown worktree %s", opts.Name)
 	}
 	views := make([]WorktreeView, len(selected))
+	comparisons := make(map[string]comparisonResult, len(selected))
+	if !opts.Fast {
+		for _, wt := range selected {
+			// A single resolved comparison is intentionally shared by worktrees
+			// with the same stored base; per-worktree base overrides are not part
+			// of the state model.
+			if _, ok := comparisons[wt.Base]; ok {
+				continue
+			}
+			resolved, resolveErr := git.ResolveComparisonRef(ctx, root, wt.Base)
+			comparisons[wt.Base] = comparisonResult{ref: resolved, err: resolveErr}
+		}
+	}
 	var wg sync.WaitGroup
 	for i, wt := range selected {
 		view := WorktreeView{
@@ -629,36 +645,67 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 			views[i] = view
 			continue
 		}
+		comparison, ok := comparisons[wt.Base]
+		if !ok {
+			comparison.err = fmt.Errorf("missing comparison ref for worktree %q (base %q)", wt.Name, wt.Base)
+		}
+		if comparison.err != nil {
+			view.Integration = "unknown"
+			view.IntegrationError = comparison.err.Error()
+			view.ChecksIncomplete = true
+			if !opts.Detailed {
+				view.DetailsSkipped = true
+			}
+			views[i] = view
+			continue
+		}
+		view.BaseRef = comparison.ref.Ref
+		view.ComparisonSource = comparison.ref.Source
+		head := wt.Branch
+		headFromWorktree := head == ""
 		if !opts.Detailed {
 			wg.Add(1)
-			go func(i int, view WorktreeView, base string) {
+			go func(i int, view WorktreeView, repositoryRoot string, comparison git.ComparisonRef, head string, headFromWorktree bool) {
 				defer wg.Done()
-				view.Integration, view.IntegrationError = collectIntegration(ctx, view.Path, base)
+				view.Integration, view.IntegrationError = collectIntegrationAt(ctx, view.Path, repositoryRoot, comparison, head, headFromWorktree)
+				if view.IntegrationError != "" {
+					view.BaseRef = ""
+					view.ComparisonSource = ""
+				}
 				view.DetailsSkipped = true
 				view.ChecksIncomplete = view.IntegrationError != ""
 				views[i] = view
-			}(i, view, wt.Base)
+			}(i, view, root, comparison.ref, head, headFromWorktree)
 			continue
 		}
 		wg.Add(1)
-		go func(i int, view WorktreeView, base, phase string) {
+		go func(i int, view WorktreeView, repositoryRoot string, comparison git.ComparisonRef, head, phase string, headFromWorktree bool) {
 			defer wg.Done()
-			checks := collectGitChecks(ctx, view.Path, base)
+			checks := collectGitChecksAt(ctx, view.Path, repositoryRoot, comparison, head, headFromWorktree)
 			view.Dirty = checks.dirty
 			view.Ahead = checks.ahead
 			view.Behind = checks.behind
 			view.Integration = checks.integration
 			view.IntegrationError = checks.integrationError
+			if checks.incomplete {
+				view.BaseRef = ""
+				view.ComparisonSource = ""
+			}
 			view.CheckError = checks.checkError
 			view.ChecksIncomplete = checks.incomplete
 			if checks.checkError == "" {
 				view.Next = nextAction(checks.dirty, checks.integration, phase)
 			}
 			views[i] = view
-		}(i, view, wt.Base, wt.Activity.Phase)
+		}(i, view, root, comparison.ref, head, wt.Activity.Phase, headFromWorktree)
 	}
 	wg.Wait()
 	return ListResult{Worktrees: views}, nil
+}
+
+type comparisonResult struct {
+	ref git.ComparisonRef
+	err error
 }
 
 func discoverForestRoots(ctx context.Context, start string) ([]string, []string, error) {
@@ -780,11 +827,29 @@ type gitChecks struct {
 	incomplete       bool
 }
 
-// collectGitChecks runs the three per-worktree git checks concurrently.
+// collectGitChecksAt runs the three per-worktree git checks concurrently.
+// headFromWorktree explicitly selects the checked-out HEAD from path; when
+// false, head is resolved from repositoryRoot.
 // Each goroutine writes its own local before the WaitGroup barrier publishes
 // the results; a cancelled context abandons queued checks instead of waiting
 // on a semaphore slot.
-func collectGitChecks(ctx context.Context, path, base string) gitChecks {
+func collectGitChecksAt(ctx context.Context, path, repositoryRoot string, comparison git.ComparisonRef, head string, headFromWorktree bool) gitChecks {
+	base := comparison.OID
+	if base == "" {
+		base = comparison.Ref
+	}
+	if _, err := os.Stat(path); err != nil {
+		diagnostic := "worktree inaccessible: " + err.Error()
+		return gitChecks{
+			dirty:            false,
+			ahead:            -1,
+			behind:           -1,
+			integration:      "unknown",
+			integrationError: diagnostic,
+			checkError:       diagnostic,
+			incomplete:       true,
+		}
+	}
 	var (
 		wg           sync.WaitGroup
 		dirty        bool
@@ -810,8 +875,20 @@ func collectGitChecks(ctx context.Context, path, base string) gitChecks {
 		}()
 	}
 	run(func() { dirty, dirtyErr = git.Dirty(ctx, path) }, func(err error) { dirtyErr = err })
-	run(func() { ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base) }, func(err error) { aheadErr = err })
-	run(func() { integration, integrateErr = git.Integration(ctx, path, base) }, func(err error) { integrateErr = err })
+	run(func() {
+		if headFromWorktree {
+			ahead, behind, aheadErr = git.AheadBehindWithError(ctx, path, base)
+			return
+		}
+		ahead, behind, aheadErr = git.AheadBehindRefWithError(ctx, repositoryRoot, base, head)
+	}, func(err error) { aheadErr = err })
+	run(func() {
+		if headFromWorktree {
+			integration, integrateErr = git.IntegrationWithComparison(ctx, path, comparison)
+			return
+		}
+		integration, integrateErr = git.IntegrationRefWithComparison(ctx, repositoryRoot, comparison, head)
+	}, func(err error) { integrateErr = err })
 	wg.Wait()
 	if dirtyErr != nil {
 		dirty = true
@@ -843,14 +920,25 @@ func collectGitChecks(ctx context.Context, path, base string) gitChecks {
 	}
 }
 
-func collectIntegration(ctx context.Context, path, base string) (string, string) {
+// collectIntegrationAt explicitly chooses between the worktree's checked-out
+// HEAD and a named head resolved from repositoryRoot.
+func collectIntegrationAt(ctx context.Context, path, repositoryRoot string, comparison git.ComparisonRef, head string, headFromWorktree bool) (string, string) {
 	select {
 	case gitCheckSlots <- struct{}{}:
 	case <-ctx.Done():
 		return "unknown", ctx.Err().Error()
 	}
 	defer func() { <-gitCheckSlots }()
-	status, err := git.Integration(ctx, path, base)
+	if _, err := os.Stat(path); err != nil {
+		return "unknown", "worktree inaccessible: " + err.Error()
+	}
+	var status string
+	var err error
+	if headFromWorktree {
+		status, err = git.IntegrationWithComparison(ctx, path, comparison)
+	} else {
+		status, err = git.IntegrationRefWithComparison(ctx, repositoryRoot, comparison, head)
+	}
 	return status, errorText(err)
 }
 
@@ -988,19 +1076,25 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 		}
 		registry := loadGitWorktreeRegistry(ctx, root)
 		var kept []state.Worktree
+		comparisons := make(map[string]comparisonResult, len(store.Worktrees))
 		matched := false
 		for _, wt := range store.Worktrees {
-			if !opts.Merged && wt.ID != opts.Name && wt.Name != opts.Name && wt.Branch != opts.Name {
+			matchesName := wt.ID == opts.Name || wt.Name == opts.Name || wt.Branch == opts.Name
+			if opts.Name != "" && !matchesName {
+				kept = append(kept, wt)
+				continue
+			}
+			if opts.Name == "" && !opts.Merged {
 				kept = append(kept, wt)
 				continue
 			}
 			matched = true
-			abs := filepath.Join(root, wt.Path)
 			if !validStatePath(wt.Path) {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid Forest worktree path"})
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree path"})
 				kept = append(kept, wt)
 				continue
 			}
+			abs := filepath.Join(root, wt.Path)
 			evidence := inspectWorktree(abs, registry)
 			if registry.LoadErr != nil || !evidence.healthy() {
 				if evidence.GitMarker {
@@ -1060,24 +1154,81 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
 				continue
 			}
+			if _, statErr := os.Stat(abs); statErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			inside, pathErr := pathutil.Contains(filepath.Join(root, config.WorktreeDir), abs)
+			if pathErr != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + pathErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			if !inside {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree path: outside Forest worktree root"})
+				kept = append(kept, wt)
+				continue
+			}
 			dirty, dirtyErr := git.Dirty(ctx, abs)
 			if dirtyErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + dirtyErr.Error()})
 				kept = append(kept, wt)
 				continue
 			}
-			integrated, integrationErr := git.Integration(ctx, abs, wt.Base)
 			if dirty && !opts.IncludeDirty {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "dirty"})
 				kept = append(kept, wt)
 				continue
 			}
-			if integrationErr != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown: " + integrationErr.Error()})
+			comparison, ok := comparisons[wt.Base]
+			if !ok {
+				resolved, comparisonErr := git.ResolveComparisonRef(ctx, root, wt.Base)
+				comparison = comparisonResult{ref: resolved, err: comparisonErr}
+				comparisons[wt.Base] = comparison
+			}
+			if comparison.err != nil {
+				reason := "integration unknown: " + comparison.err.Error()
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: reason})
+				if opts.Merged {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not determine integration; worktree was not closed: %v", wt.Name, comparison.err))
+				}
 				kept = append(kept, wt)
 				continue
 			}
-			if integrated == "unmerged" && !opts.IncludeUnmerged {
+			var integrated string
+			var integrationErr error
+			if wt.Branch == "" {
+				// An empty branch is corrupted state. Resolve HEAD from the
+				// worktree itself; resolving HEAD from root would inspect the
+				// repository's primary worktree instead.
+				integrated, integrationErr = git.IntegrationWithComparison(ctx, abs, comparison.ref)
+			} else {
+				integrated, integrationErr = git.IntegrationRefWithComparison(ctx, root, comparison.ref, wt.Branch)
+			}
+			if integrationErr != nil {
+				reason := "integration unknown: " + integrationErr.Error()
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: reason})
+				if opts.Merged {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not determine integration; worktree was not closed: %v", wt.Name, integrationErr))
+				}
+				kept = append(kept, wt)
+				continue
+			}
+			if integrated == "unknown" {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "integration unknown"})
+				if opts.Merged {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not determine integration; worktree was not closed", wt.Name))
+				}
+				kept = append(kept, wt)
+				continue
+			}
+			if opts.Merged && !isMergedIntegration(integrated) && !(opts.IncludeUnmerged && integrated == "unmerged") {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "not merged"})
+				kept = append(kept, wt)
+				continue
+			}
+			if !opts.Merged && integrated == "unmerged" && !opts.IncludeUnmerged {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "unmerged"})
 				kept = append(kept, wt)
 				continue
@@ -1087,24 +1238,33 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				kept = append(kept, wt)
 				continue
 			}
+			if opts.Merged && opts.IncludeUnmerged && integrated == "unmerged" {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: closing unmerged worktree because --include-unmerged was specified", wt.Name))
+			}
 			if err := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty); err != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: err.Error()})
 				kept = append(kept, wt)
 				continue
 			}
-			if opts.DeleteBranch {
-				_ = git.DeleteBranch(ctx, root, wt.Branch)
+			if opts.DeleteBranch && wt.Branch != "" {
+				if err := git.DeleteBranch(ctx, root, wt.Branch); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: branch %q was not deleted: %v", wt.Name, wt.Branch, err))
+				}
 			}
 			result.Closed = append(result.Closed, wt.Name)
 			_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
 		}
-		if !opts.Merged && !matched {
-			return fmt.Errorf("unknown worktree %s (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
+		if opts.Name != "" && !matched {
+			return fmt.Errorf("worktree %q not found in Forest state (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
 		}
 		store.Worktrees = kept
 		return a.saveStore(root, store)
 	})
 	return result, err
+}
+
+func isMergedIntegration(integration string) bool {
+	return integration == "merged" || integration == "patch-equivalent"
 }
 
 func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {

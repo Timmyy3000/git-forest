@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Timmyy3000/git-forest/internal/app"
@@ -38,6 +39,13 @@ func TestJSONFlagWorksForAgentContractCommands(t *testing.T) {
 				t.Fatalf("expected JSON output, got %q: %v", out, err)
 			}
 		})
+	}
+}
+
+func TestCloseMergedRejectsMultipleNames(t *testing.T) {
+	_, err := executeTestCommand("close", "--merged", "first", "second")
+	if err == nil || !strings.Contains(err.Error(), "at most one worktree name") {
+		t.Fatalf("error = %v, want multiple-name validation", err)
 	}
 }
 
@@ -98,6 +106,9 @@ func TestListJSONMarksIntegrationOnlyChecks(t *testing.T) {
 	if fastWorktree["lifecycle"] != "unverified" || fastWorktree["registrationStatus"] != "notChecked" {
 		t.Fatalf("fast lifecycle contract = %+v, want unverified/notChecked", fastWorktree)
 	}
+	if worktree["baseRef"] != "refs/heads/main" || worktree["comparisonSource"] != "local" {
+		t.Fatalf("comparison metadata = baseRef=%v source=%v, want refs/heads/main/local", worktree["baseRef"], worktree["comparisonSource"])
+	}
 }
 
 func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
@@ -129,10 +140,8 @@ func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
 	}
 	var decoded struct {
 		Repositories []struct {
-			Path      string `json:"path"`
-			Worktrees []struct {
-				Name string `json:"name"`
-			} `json:"worktrees"`
+			Path      string           `json:"path"`
+			Worktrees []map[string]any `json:"worktrees"`
 		} `json:"repositories"`
 	}
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
@@ -143,6 +152,16 @@ func TestListRecursiveJSONUsesRepositoryRelativePaths(t *testing.T) {
 	}
 	if decoded.Repositories[0].Path != "./child" || decoded.Repositories[1].Path != "./root" {
 		t.Fatalf("repository paths = %+v", decoded.Repositories)
+	}
+	expectedNames := map[string]string{"./child": "child-worktree", "./root": "root-worktree"}
+	for _, repository := range decoded.Repositories {
+		if len(repository.Worktrees) != 1 {
+			t.Fatalf("repository %q worktrees = %+v, want one worktree", repository.Path, repository.Worktrees)
+		}
+		name, ok := repository.Worktrees[0]["name"].(string)
+		if !ok || name != expectedNames[repository.Path] {
+			t.Fatalf("repository %q worktree name = %v, want %q", repository.Path, repository.Worktrees[0]["name"], expectedNames[repository.Path])
+		}
 	}
 }
 
