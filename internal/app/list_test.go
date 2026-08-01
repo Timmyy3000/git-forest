@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/git"
+	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
 func TestListDetailedRunsGitChecksAndPreservesOrder(t *testing.T) {
@@ -68,6 +71,104 @@ func TestListDefaultRefreshesIntegrationButSkipsDetails(t *testing.T) {
 	}
 	if wt.Next != "" {
 		t.Fatalf("next = %q, want empty when details are skipped", wt.Next)
+	}
+}
+
+func TestListReportsComparisonRefResolutionFailure(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "missing-base", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Worktrees[0].Base = "does-not-exist"
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := application.List(context.Background(), ListOptions{Name: added.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Worktrees) != 1 {
+		t.Fatalf("worktrees = %d, want 1", len(result.Worktrees))
+	}
+	view := result.Worktrees[0]
+	if view.Integration != "unknown" {
+		t.Fatalf("integration = %q, want unknown", view.Integration)
+	}
+	if !strings.Contains(view.IntegrationError, "does-not-exist") {
+		t.Fatalf("integration error = %q, want missing base", view.IntegrationError)
+	}
+	if !view.ChecksIncomplete || !view.DetailsSkipped {
+		t.Fatalf("comparison failure flags = incomplete:%t details-skipped:%t, want both true", view.ChecksIncomplete, view.DetailsSkipped)
+	}
+}
+
+func TestListAndClosePreferOriginBaseForSquashedWorktree(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	t.Chdir(root)
+	application := New()
+
+	added, err := application.Add(context.Background(), AddOptions{Name: "stale", Agent: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitTestFile(t, added.Path, "one.txt", "one\n", "one")
+	commitTestFile(t, added.Path, "two.txt", "two\n", "two")
+
+	runGit(t, root, "switch", "-c", "integration")
+	runGit(t, root, "merge", "--squash", added.Branch)
+	runGit(t, root, "commit", "-m", "squash stale")
+	target := strings.TrimSpace(runGitOutput(t, root, "rev-parse", "HEAD"))
+	runGit(t, root, "switch", "main")
+	runGit(t, root, "update-ref", "refs/remotes/origin/main", target)
+
+	result, err := application.List(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Worktrees) != 1 {
+		t.Fatalf("worktrees = %d, want 1", len(result.Worktrees))
+	}
+	view := result.Worktrees[0]
+	if view.Integration != "patch-equivalent" {
+		t.Fatalf("integration = %q, want patch-equivalent", view.Integration)
+	}
+	if view.BaseRef != "origin/main" || view.ComparisonSource != "remote-tracking" {
+		t.Fatalf("comparison = baseRef=%q source=%q, want origin/main/remote-tracking", view.BaseRef, view.ComparisonSource)
+	}
+
+	closed, err := application.Close(context.Background(), CloseOptions{Merged: true, Yes: true, DeleteBranch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed.Closed) != 1 || closed.Closed[0] != "stale" {
+		t.Fatalf("close result = %+v, want stale closed", closed)
+	}
+	if len(closed.Warnings) != 1 || !strings.Contains(closed.Warnings[0], "was not deleted") {
+		t.Fatalf("close warnings = %v, want branch deletion warning", closed.Warnings)
+	}
+	if !git.BranchExists(context.Background(), root, added.Branch) {
+		t.Fatalf("branch %q should survive failed deletion", added.Branch)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find(added.Name); ok {
+		t.Fatalf("closed worktree %q remains in state", added.Name)
+	}
+	if _, err := application.List(context.Background(), ListOptions{Name: added.Name}); err == nil {
+		t.Fatalf("list should reject closed worktree %q", added.Name)
 	}
 }
 
@@ -278,6 +379,19 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	if !wt.ChecksIncomplete {
 		t.Fatal("expected failed integration-only check to be marked incomplete")
 	}
+	if wt.BaseRef != "" || wt.ComparisonSource != "" {
+		t.Fatalf("failed integration should omit comparison metadata, got baseRef=%q source=%q", wt.BaseRef, wt.ComparisonSource)
+	}
+	detailed, err := application.List(context.Background(), ListOptions{Name: added.Name, Detailed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detailed.Worktrees[0].Dirty {
+		t.Fatal("inaccessible worktree must not be reported as dirty")
+	}
+	if detailed.Worktrees[0].BaseRef != "" || detailed.Worktrees[0].ComparisonSource != "" {
+		t.Fatalf("detailed failed integration should omit comparison metadata, got baseRef=%q source=%q", detailed.Worktrees[0].BaseRef, detailed.Worktrees[0].ComparisonSource)
+	}
 }
 
 func TestCloseReportsInaccessibleWorktree(t *testing.T) {
@@ -357,7 +471,9 @@ func TestCollectGitChecksReportsCancelledQueuedChecks(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	checksCh := make(chan gitChecks, 1)
-	go func() { checksCh <- collectGitChecks(ctx, root, "main") }()
+	go func() {
+		checksCh <- collectGitChecksAt(ctx, root, root, git.ComparisonRef{Ref: "main", OID: "main"}, "", true)
+	}()
 	cancel()
 	checks := <-checksCh
 
@@ -405,7 +521,19 @@ func TestListFastSkipsGitChecks(t *testing.T) {
 	if wt.DetailsSkipped {
 		t.Fatal("metadata-only fast mode should use ChecksSkipped instead")
 	}
+	if wt.BaseRef != "" || wt.ComparisonSource != "" {
+		t.Fatalf("fast mode should omit comparison metadata, got baseRef=%q source=%q", wt.BaseRef, wt.ComparisonSource)
+	}
 	if wt.Name != "speedy" || wt.Agent != "test" {
 		t.Fatalf("state fields should still be populated, got %+v", wt)
 	}
+}
+
+func commitTestFile(t *testing.T, root, name, contents, message string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", name)
+	runGit(t, root, "commit", "-m", message)
 }
