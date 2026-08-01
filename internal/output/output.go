@@ -99,6 +99,9 @@ func renderListTable(w io.Writer, worktrees []app.WorktreeView) error {
 }
 
 func listIntegration(wt app.WorktreeView) string {
+	if wt.Lifecycle == "unverified" {
+		return "unverified"
+	}
 	if wt.ChecksSkipped {
 		return "-"
 	}
@@ -123,11 +126,14 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 	fmt.Fprintln(tw, "NAME\tGIT\tINTEGRATION\tUPDATED\tNOTE")
 	for _, wt := range result.Worktrees {
 		integration := withIntegrationError(wt)
+		if wt.Lifecycle == "unverified" {
+			integration = "unverified"
+		}
 		if wt.ChecksIncomplete {
 			integration += " (partial)"
 		}
 		gitState := "-"
-		if wt.ChecksIncomplete {
+		if wt.Lifecycle == "unverified" || wt.ChecksIncomplete {
 			gitState = "unknown"
 		} else if !wt.ChecksSkipped {
 			gitState = "clean"
@@ -144,6 +150,11 @@ func RenderStatus(w io.Writer, result app.ListResult) error {
 				note += "; "
 			}
 			note += wt.CheckError
+		} else if wt.Reason != "" {
+			if note != "" {
+				note += "; "
+			}
+			note += wt.Reason
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", wt.Name, gitState, styleIntegration(integration), age(wt.Updated), dash(note))
 	}

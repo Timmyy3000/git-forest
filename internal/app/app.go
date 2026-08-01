@@ -17,9 +17,18 @@ import (
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
 
-type App struct{}
+type App struct {
+	saveFn func(string, state.Store) error
+}
 
-func New() *App { return &App{} }
+func New() *App { return &App{saveFn: state.Save} }
+
+func (a *App) saveStore(root string, store state.Store) error {
+	if a.saveFn != nil {
+		return a.saveFn(root, store)
+	}
+	return state.Save(root, store)
+}
 
 type InitResult struct {
 	ForestDir string   `json:"forestDir"`
@@ -63,19 +72,26 @@ type StatusOptions struct {
 }
 
 type WorktreeView struct {
-	Name             string    `json:"name"`
-	Branch           string    `json:"branch"`
-	Path             string    `json:"path"`
-	Agent            string    `json:"agent,omitempty"`
-	Phase            string    `json:"phase,omitempty"`
-	Note             string    `json:"note,omitempty"`
-	Updated          time.Time `json:"updated"`
-	Dirty            bool      `json:"dirty"`
-	Ahead            int       `json:"ahead"`
-	Behind           int       `json:"behind"`
-	Integration      string    `json:"integration"`
-	BaseRef          string    `json:"baseRef,omitempty"`
-	ComparisonSource string    `json:"comparisonSource,omitempty"`
+	Name        string    `json:"name"`
+	Branch      string    `json:"branch"`
+	Path        string    `json:"path"`
+	Agent       string    `json:"agent,omitempty"`
+	Phase       string    `json:"phase,omitempty"`
+	Note        string    `json:"note,omitempty"`
+	Updated     time.Time `json:"updated"`
+	Dirty       bool      `json:"dirty"`
+	Ahead       int       `json:"ahead"`
+	Behind      int       `json:"behind"`
+	Integration string    `json:"integration"`
+	// Lifecycle describes whether the record is active, stale, invalid, or
+	// intentionally unverified (--fast).
+	Lifecycle string `json:"lifecycle"`
+	// RegistrationStatus describes the Git evidence used for lifecycle.
+	RegistrationStatus string `json:"registrationStatus"`
+	// Reason explains stale, invalid, or unverified lifecycle values.
+	Reason           string `json:"reason,omitempty"`
+	BaseRef          string `json:"baseRef,omitempty"`
+	ComparisonSource string `json:"comparisonSource,omitempty"`
 	// IntegrationError explains why Integration is unknown.
 	IntegrationError string `json:"integrationError,omitempty"`
 	// CheckError captures failures from detailed Git health checks.
@@ -153,6 +169,250 @@ type Check struct {
 	Status string `json:"status"`
 }
 
+type gitWorktreeRegistry struct {
+	Entries []git.WorktreeInfo
+	ByPath  map[string]git.WorktreeInfo
+	LoadErr error
+}
+
+type untrackedWorktree struct {
+	ID     string
+	Status string
+}
+
+type worktreeEvidence struct {
+	PathExists   bool
+	IsDirectory  bool
+	GitMarker    bool
+	Registration *git.WorktreeInfo
+}
+
+func worktreePathKey(path string) string {
+	key, err := pathutil.NormalizePath(path)
+	if err == nil {
+		return key
+	}
+	key = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		key = strings.ToLower(key)
+	}
+	return key
+}
+
+func loadGitWorktreeRegistry(ctx context.Context, root string) gitWorktreeRegistry {
+	entries, err := git.Worktrees(ctx, root)
+	registry := gitWorktreeRegistry{Entries: entries, ByPath: make(map[string]git.WorktreeInfo), LoadErr: err}
+	if err != nil {
+		return registry
+	}
+	for _, entry := range entries {
+		registry.ByPath[worktreePathKey(entry.Path)] = entry
+	}
+	return registry
+}
+
+func inspectWorktree(path string, registry gitWorktreeRegistry) worktreeEvidence {
+	evidence := worktreeEvidence{}
+	info, err := os.Stat(path)
+	if err == nil {
+		evidence.PathExists = true
+		evidence.IsDirectory = info.IsDir()
+	}
+	if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+		evidence.GitMarker = true
+	}
+	if registration, ok := registry.ByPath[worktreePathKey(path)]; ok {
+		copy := registration
+		evidence.Registration = &copy
+	}
+	return evidence
+}
+
+func (e worktreeEvidence) healthy() bool {
+	return e.PathExists && e.IsDirectory && e.GitMarker && e.Registration != nil && !e.Registration.Prunable
+}
+
+func (e worktreeEvidence) staleResidual() bool {
+	return e.PathExists && e.IsDirectory && !e.GitMarker
+}
+
+func invalidWorktreeReason(e worktreeEvidence, registryErr error) string {
+	if registryErr != nil {
+		return "cannot inspect Git worktree registrations: " + registryErr.Error()
+	}
+	if !e.PathExists {
+		return "worktree folder is missing"
+	}
+	if !e.IsDirectory {
+		return "worktree path is not a directory"
+	}
+	if !e.GitMarker {
+		return "worktree .git marker is missing"
+	}
+	if e.Registration == nil {
+		return "worktree is not registered with Git"
+	}
+	if e.Registration.Prunable {
+		return "Git worktree registration is prunable"
+	}
+	return "worktree is invalid"
+}
+
+func worktreeRegistrationStatus(e worktreeEvidence, registryErr error) string {
+	if registryErr != nil {
+		return "unavailable"
+	}
+	if e.Registration == nil {
+		return "missing"
+	}
+	if e.Registration.Prunable {
+		return "prunable"
+	}
+	return "registered"
+}
+
+func classifyWorktree(e worktreeEvidence, registryErr error) (lifecycle, registrationStatus, reason string) {
+	registrationStatus = worktreeRegistrationStatus(e, registryErr)
+	if registryErr != nil {
+		return "invalid", registrationStatus, invalidWorktreeReason(e, registryErr)
+	}
+	if !e.PathExists {
+		return "stale", registrationStatus, "worktree folder is missing"
+	}
+	if !e.IsDirectory {
+		return "invalid", registrationStatus, "worktree path is not a directory"
+	}
+	if !e.GitMarker {
+		return "stale", registrationStatus, "worktree .git marker is missing"
+	}
+	if e.Registration != nil && e.Registration.Prunable {
+		return "invalid", registrationStatus, "Git worktree registration is prunable"
+	}
+	if e.Registration == nil {
+		return "invalid", registrationStatus, "worktree .git marker exists but Git registration is missing"
+	}
+	return "active", registrationStatus, ""
+}
+
+func forestWorktreeRoot(root string) string {
+	return filepath.Join(root, config.WorktreeDir)
+}
+
+func forestWorktreeRelative(root, path string) (string, bool) {
+	rootAbs, err := pathutil.NormalizePath(forestWorktreeRoot(root))
+	if err != nil {
+		return "", false
+	}
+	pathAbs, err := pathutil.NormalizePath(path)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return "", false
+	}
+	return rel, true
+}
+
+func safeResidualPath(root, path string) error {
+	rel, ok := forestWorktreeRelative(root, path)
+	if !ok || !validStatePath(filepath.Join(config.WorktreeDir, rel)) {
+		return fmt.Errorf("path %q is outside %s", path, config.WorktreeDir)
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect residual path: %w", err)
+	}
+	rootCanonical, err := pathutil.CanonicalPath(forestWorktreeRoot(root))
+	if err != nil {
+		return fmt.Errorf("resolve worktree root: %w", err)
+	}
+	pathCanonical, err := pathutil.CanonicalPath(path)
+	if err != nil {
+		return fmt.Errorf("resolve residual path: %w", err)
+	}
+	inside, err := pathutil.Contains(rootCanonical, pathCanonical)
+	if err != nil || !inside {
+		return fmt.Errorf("path %q resolves outside %s", path, config.WorktreeDir)
+	}
+	return nil
+}
+
+func removeResidualDirectory(root, path string) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("residual path is not a directory: %s", path)
+	}
+	if _, err := os.Lstat(filepath.Join(path, ".git")); err == nil {
+		return fmt.Errorf("refusing to remove %s because .git exists", path)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect .git marker: %w", err)
+	}
+	if err := safeResidualPath(root, path); err != nil {
+		return err
+	}
+	if entries, err := os.ReadDir(path); err != nil {
+		return fmt.Errorf("inspect residual contents: %w", err)
+	} else if len(entries) > 0 {
+		return fmt.Errorf("residual path is not empty")
+	}
+	return os.Remove(path)
+}
+
+func ensureEmptyResidualDirectory(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("inspect residual contents: %w", err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("residual path is not empty")
+	}
+	return nil
+}
+
+func ensureEmptyResidualIfPresent(path string) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect residual path: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("residual path is not a directory: %s", path)
+	}
+	return ensureEmptyResidualDirectory(path)
+}
+
+func stateHasPath(store state.Store, root, path string) bool {
+	key := worktreePathKey(path)
+	for _, worktree := range store.Worktrees {
+		if worktreePathKey(filepath.Join(root, worktree.Path)) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func stateHasHealthyBranch(store state.Store, root string, registry gitWorktreeRegistry, branch string) bool {
+	for _, worktree := range store.Worktrees {
+		if worktree.Branch != branch || !validStatePath(worktree.Path) {
+			continue
+		}
+		if inspectWorktree(filepath.Join(root, worktree.Path), registry).healthy() {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) Init(ctx context.Context) (InitResult, error) {
 	root, err := git.Root(ctx, ".")
 	if err != nil {
@@ -166,7 +426,7 @@ func (a *App) Init(ctx context.Context) (InitResult, error) {
 		return InitResult{}, err
 	}
 	store.DefaultBase = git.DefaultBranch(ctx, root)
-	if err := state.Save(root, store); err != nil {
+	if err := a.saveStore(root, store); err != nil {
 		return InitResult{}, err
 	}
 	result := InitResult{ForestDir: filepath.Join(root, config.ForestDir)}
@@ -245,7 +505,7 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 			Status:    state.Status{LastKnown: "creating", LastCheckedAt: now},
 		}
 		store.Worktrees = append(store.Worktrees, worktree)
-		if err := state.Save(root, store); err != nil {
+		if err := a.saveStore(root, store); err != nil {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "creating", ID: mapping.Identity})
@@ -254,7 +514,7 @@ func (a *App) Add(ctx context.Context, opts AddOptions) (AddResult, error) {
 		if _, idx, ok := store.Find(mapping.Identity); ok {
 			store.Worktrees[idx] = worktree
 		}
-		if err := state.Save(root, store); err != nil {
+		if err := a.saveStore(root, store); err != nil {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "created", ID: mapping.Identity})
@@ -318,6 +578,10 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 	if err != nil {
 		return ListResult{}, err
 	}
+	registry := gitWorktreeRegistry{}
+	if !opts.Fast {
+		registry = loadGitWorktreeRegistry(ctx, root)
+	}
 	var selected []state.Worktree
 	for _, wt := range store.Worktrees {
 		if opts.Name != "" && wt.ID != opts.Name && wt.Name != opts.Name && wt.Branch != opts.Name {
@@ -362,6 +626,22 @@ func (a *App) listAt(ctx context.Context, root string, opts ListOptions) (ListRe
 		if opts.Fast {
 			view.ChecksSkipped = true
 			view.Integration = "unknown"
+			view.Lifecycle = "unverified"
+			view.RegistrationStatus = "notChecked"
+			view.Reason = "Git worktree registration not checked (--fast)"
+			views[i] = view
+			continue
+		}
+		evidence := inspectWorktree(view.Path, registry)
+		view.Lifecycle, view.RegistrationStatus, view.Reason = classifyWorktree(evidence, registry.LoadErr)
+		if registry.LoadErr != nil || !evidence.healthy() {
+			view.Integration = "unknown"
+			view.IntegrationError = view.Reason
+			view.CheckError = view.Reason
+			view.ChecksIncomplete = true
+			if !opts.Detailed {
+				view.DetailsSkipped = true
+			}
 			views[i] = view
 			continue
 		}
@@ -494,10 +774,20 @@ func samePath(left, right string) bool {
 	if err != nil {
 		return false
 	}
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if left == right {
+		return true
+	}
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	if leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo) {
+		// Filesystem identity handles case-insensitive macOS volumes without
+		// incorrectly folding names on case-sensitive Darwin volumes.
+		return true
+	}
+	if runtime.GOOS == "windows" {
 		return strings.EqualFold(left, right)
 	}
-	return left == right
+	return false
 }
 
 func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error) {
@@ -522,6 +812,9 @@ func (a *App) Status(ctx context.Context, opts StatusOptions) (ListResult, error
 	}
 	if len(result.Worktrees) != 1 {
 		return ListResult{}, fmt.Errorf("--diff requires exactly one managed worktree")
+	}
+	if result.Worktrees[0].CheckError != "" {
+		return ListResult{}, fmt.Errorf("cannot diff invalid worktree %s: %s", result.Worktrees[0].Name, result.Worktrees[0].CheckError)
 	}
 	result.Diff, err = git.Diff(ctx, result.Worktrees[0].Path)
 	if err != nil {
@@ -713,7 +1006,7 @@ func (a *App) Mark(ctx context.Context, opts MarkOptions) (MarkResult, error) {
 		}
 		wt.Activity.LastSeenAt = now
 		store.Worktrees[idx] = wt
-		if err := state.Save(root, store); err != nil {
+		if err := a.saveStore(root, store); err != nil {
 			return err
 		}
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "marked", ID: wt.ID, Detail: opts.Phase})
@@ -791,6 +1084,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 		if err != nil {
 			return err
 		}
+		registry := loadGitWorktreeRegistry(ctx, root)
 		var kept []state.Worktree
 		comparisons := make(map[string]comparisonResult, len(store.Worktrees))
 		matched := false
@@ -811,6 +1105,65 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			abs := filepath.Join(root, wt.Path)
+			evidence := inspectWorktree(abs, registry)
+			if registry.LoadErr != nil || !evidence.healthy() {
+				if evidence.GitMarker {
+					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree: " + invalidWorktreeReason(evidence, registry.LoadErr)})
+					kept = append(kept, wt)
+					continue
+				}
+				if !evidence.staleResidual() && (evidence.PathExists || evidence.Registration == nil) {
+					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree: " + invalidWorktreeReason(evidence, registry.LoadErr)})
+					kept = append(kept, wt)
+					continue
+				}
+				if !opts.Yes {
+					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "stale residual requires --yes"})
+					kept = append(kept, wt)
+					continue
+				}
+				if evidence.staleResidual() {
+					if err := safeResidualPath(root, abs); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
+					if err := ensureEmptyResidualDirectory(abs); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
+				}
+				// A stale residual has no .git marker, so Git may refuse to remove
+				// its prunable registration while the empty directory still exists.
+				// removeResidualDirectory rechecks containment and emptiness immediately
+				// before os.Remove; it never recursively deletes user content.
+				if evidence.staleResidual() {
+					if err := removeResidualDirectory(root, abs); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
+				}
+				if evidence.Registration != nil {
+					if err := safeResidualPath(root, evidence.Registration.Path); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale Git registration: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
+					if err := git.WorktreeRemove(ctx, root, evidence.Registration.Path, true); err != nil {
+						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale Git registration: " + err.Error()})
+						kept = append(kept, wt)
+						continue
+					}
+				}
+				if opts.DeleteBranch {
+					_ = git.DeleteBranch(ctx, root, wt.Branch)
+				}
+				result.Closed = append(result.Closed, wt.Name)
+				_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
+				continue
+			}
 			if _, statErr := os.Stat(abs); statErr != nil {
 				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
 				kept = append(kept, wt)
@@ -915,7 +1268,7 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			return fmt.Errorf("worktree %q not found in Forest state (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
 		}
 		store.Worktrees = kept
-		return state.Save(root, store)
+		return a.saveStore(root, store)
 	})
 	return result, err
 }
@@ -1006,13 +1359,15 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 			return nil
 		}
 		checks = append(checks, Check{Name: "state file", Status: "ok"})
-		adopted, untracked, reconcileErr := a.reconcileGitWorktrees(ctx, root, &store, fix && canMutate)
-		if reconcileErr != nil {
-			checks = append(checks, Check{Name: "git worktrees", Status: "invalid: " + reconcileErr.Error()})
+		registry := loadGitWorktreeRegistry(ctx, root)
+		if registry.LoadErr != nil {
+			checks = append(checks, Check{Name: "git worktrees", Status: "invalid: " + registry.LoadErr.Error()})
 			canMutate = false
+			return nil
 		}
-		for _, id := range untracked {
-			checks = append(checks, Check{Name: "worktree " + id, Status: "untracked by Forest state"})
+		adopted, untracked := a.reconcileGitWorktreesWithRegistry(ctx, root, &store, registry, fix && canMutate)
+		for _, worktree := range untracked {
+			checks = append(checks, Check{Name: "worktree " + worktree.ID, Status: worktree.Status})
 		}
 		if adopted > 0 {
 			checks = append(checks, Check{Name: "worktree adoption", Status: fmt.Sprintf("adopted %d git worktree(s)", adopted)})
@@ -1020,43 +1375,155 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 		var kept []state.Worktree
 		removed := 0
 		changed := adopted
+		stateHealthy := true
+		cleanedRegistrations := make(map[string]bool)
 		for _, wt := range store.Worktrees {
 			keep := true
 			if !validStatePath(wt.Path) {
-				keep = false
 				checks = append(checks, Check{Name: "state path " + wt.ID, Status: "invalid: " + wt.Path})
-			} else if _, err := os.Stat(filepath.Join(root, wt.Path)); os.IsNotExist(err) {
-				keep = false
-				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "missing: " + wt.Path})
-			} else if err != nil {
-				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: " + err.Error()})
-			} else if wt.Status.LastKnown == "creating" {
-				checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "creating"})
-				if fix && canMutate {
-					wt.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
-					checks = append(checks, Check{Name: "worktree " + wt.ID + " status cleanup", Status: "marked active"})
-					changed++
+				stateHealthy = false
+			} else {
+				abs := filepath.Join(root, wt.Path)
+				evidence := inspectWorktree(abs, registry)
+				switch {
+				case !evidence.PathExists:
+					keep = false
+					stateHealthy = false
+					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "stale state: folder missing"})
+				case evidence.healthy():
+					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "healthy"})
+					if wt.Status.LastKnown == "creating" {
+						status := "would mark active"
+						if fix && canMutate {
+							status = "marked active"
+						}
+						checks = append(checks, Check{Name: "worktree " + wt.ID + " status cleanup", Status: status})
+						if fix && canMutate {
+							wt.Status = state.Status{LastKnown: "active", LastCheckedAt: time.Now().UTC()}
+							changed++
+						}
+					}
+				case evidence.staleResidual():
+					stateHealthy = false
+					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "stale residual: folder has no .git marker or valid Git registration"})
+					keep = false
+					if fix && canMutate {
+						cleanupAllowed := true
+						if evidence.Registration != nil {
+							if err := safeResidualPath(root, abs); err != nil {
+								cleanupAllowed = false
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "failed: " + err.Error()})
+							} else if err := safeResidualPath(root, evidence.Registration.Path); err != nil {
+								cleanupAllowed = false
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " Git cleanup", Status: "failed: " + err.Error()})
+							}
+						}
+						if cleanupAllowed {
+							if err := ensureEmptyResidualDirectory(abs); err != nil {
+								cleanupAllowed = false
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "skipped: " + err.Error()})
+							}
+						}
+						if cleanupAllowed {
+							if err := removeResidualDirectory(root, abs); err != nil {
+								cleanupAllowed = false
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "failed: " + err.Error()})
+							} else {
+								changed++
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " residual cleanup", Status: "removed"})
+							}
+						}
+						if cleanupAllowed && evidence.Registration != nil {
+							if err := git.WorktreeRemove(ctx, root, evidence.Registration.Path, true); err != nil {
+								keep = true
+								checks = append(checks, Check{Name: "worktree " + wt.ID + " Git cleanup", Status: "failed: " + err.Error()})
+							} else {
+								cleanedRegistrations[worktreePathKey(evidence.Registration.Path)] = true
+							}
+						}
+					}
+				case evidence.GitMarker && evidence.Registration == nil:
+					stateHealthy = false
+					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: .git marker exists but Git registration is missing; left untouched"})
+				case evidence.Registration != nil && evidence.Registration.Prunable:
+					stateHealthy = false
+					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "prunable Git metadata; worktree is not healthy"})
+				default:
+					stateHealthy = false
+					checks = append(checks, Check{Name: "worktree " + wt.ID, Status: "invalid: " + invalidWorktreeReason(evidence, nil)})
 				}
+			}
+			if !keep {
+				removed++
 			}
 			if keep {
 				kept = append(kept, wt)
-			} else {
-				removed++
 			}
 		}
-		if fix && canMutate && removed > 0 {
-			store.Worktrees = kept
-			if err := state.Save(root, store); err != nil {
-				return err
+		for _, entry := range registry.Entries {
+			if !entry.Prunable {
+				continue
 			}
-			checks = append(checks, Check{Name: "state path cleanup", Status: fmt.Sprintf("removed %d invalid record(s)", removed)})
-		} else if removed == 0 {
-			if fix && canMutate && changed > 0 {
-				store.Worktrees = kept
-				if err := state.Save(root, store); err != nil {
-					return err
+			if cleanedRegistrations[worktreePathKey(entry.Path)] {
+				continue
+			}
+			rel, ok := forestWorktreeRelative(root, entry.Path)
+			if !ok {
+				continue
+			}
+			id := filepath.ToSlash(rel)
+			stateHealthy = false
+			status := "prunable Git metadata: " + entry.PrunableReason
+			checks = append(checks, Check{Name: "git worktree " + id, Status: status})
+			if fix && canMutate {
+				if err := safeResidualPath(root, entry.Path); err != nil {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: " + err.Error()})
+				} else if _, err := os.Lstat(filepath.Join(entry.Path, ".git")); err == nil {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: .git marker exists; left untouched"})
+				} else if !os.IsNotExist(err) {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: inspect .git marker: " + err.Error()})
+				} else if err := ensureEmptyResidualIfPresent(entry.Path); err != nil {
+					checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "skipped: " + err.Error()})
+				} else {
+					hadResidual := false
+					if info, statErr := os.Stat(entry.Path); statErr == nil {
+						hadResidual = info.IsDir()
+					}
+					if hadResidual {
+						if err := removeResidualDirectory(root, entry.Path); err != nil {
+							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "skipped: " + err.Error()})
+							continue
+						} else {
+							checks = append(checks, Check{Name: "git worktree " + id + " residual cleanup", Status: "removed"})
+						}
+					}
+					if err := git.WorktreeRemove(ctx, root, entry.Path, true); err != nil {
+						checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "failed: " + err.Error()})
+					} else {
+						cleanedRegistrations[worktreePathKey(entry.Path)] = true
+						changed++
+						checks = append(checks, Check{Name: "git worktree " + id + " cleanup", Status: "pruned"})
+					}
 				}
 			}
+		}
+		if fix && canMutate && (removed > 0 || changed > 0) {
+			store.Worktrees = kept
+			if err := a.saveStore(root, store); err != nil {
+				return err
+			}
+		}
+		if removed > 0 {
+			status := fmt.Sprintf("would remove %d stale record(s)", removed)
+			if fix && canMutate {
+				status = fmt.Sprintf("removed %d stale record(s)", removed)
+			}
+			checks = append(checks, Check{Name: "state path cleanup", Status: status})
+		} else if stateHealthy {
 			checks = append(checks, Check{Name: "state paths", Status: "ok"})
 		}
 		return nil
@@ -1082,51 +1549,70 @@ func (a *App) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 	return DoctorResult{Checks: checks}, nil
 }
 
-func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []string, error) {
-	worktrees, err := git.Worktrees(ctx, root)
-	if err != nil {
-		return 0, nil, err
+func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *state.Store, adopt bool) (int, []untrackedWorktree, error) {
+	registry := loadGitWorktreeRegistry(ctx, root)
+	if registry.LoadErr != nil {
+		return 0, nil, registry.LoadErr
 	}
+	adopted, untracked := a.reconcileGitWorktreesWithRegistry(ctx, root, store, registry, adopt)
+	return adopted, untracked, nil
+}
+
+func (a *App) reconcileGitWorktreesWithRegistry(ctx context.Context, root string, store *state.Store, registry gitWorktreeRegistry, adopt bool) (int, []untrackedWorktree) {
 	now := time.Now().UTC()
 	base := store.DefaultBase
 	if base == "" {
 		base = git.DefaultBranch(ctx, root)
 	}
-	var untracked []string
+	var untracked []untrackedWorktree
 	adopted := 0
-	for _, wt := range worktrees {
-		rel, err := filepath.Rel(root, wt.Path)
-		if err != nil {
+	for _, wt := range registry.Entries {
+		if wt.Prunable {
 			continue
 		}
-		rel = filepath.Clean(rel)
-		if !validStatePath(rel) {
+		rel, ok := forestWorktreeRelative(root, wt.Path)
+		if !ok || !validStatePath(filepath.Join(config.WorktreeDir, rel)) {
 			continue
 		}
-		identityRel, err := filepath.Rel(filepath.Clean(config.WorktreeDir), rel)
-		if err != nil || !filepath.IsLocal(identityRel) {
-			continue
-		}
-		identity := filepath.ToSlash(identityRel)
+		identity := filepath.ToSlash(rel)
 		branch := wt.Branch
 		if branch == "" {
 			continue
 		}
-		if _, _, ok := store.Find(identity); ok {
+		if stateHasPath(*store, root, wt.Path) {
 			continue
 		}
-		if _, _, ok := store.Find(branch); ok {
+		evidence := inspectWorktree(wt.Path, registry)
+		if !evidence.healthy() {
+			untracked = append(untracked, untrackedWorktree{
+				ID:     identity,
+				Status: "untracked by Forest state; adoption skipped: " + invalidWorktreeReason(evidence, registry.LoadErr),
+			})
 			continue
 		}
-		untracked = append(untracked, identity)
 		if !adopt {
+			untracked = append(untracked, untrackedWorktree{
+				ID:     identity,
+				Status: "untracked by Forest state; run forest doctor --fix to adopt",
+			})
 			continue
 		}
+		if stateHasHealthyBranch(*store, root, registry, branch) {
+			untracked = append(untracked, untrackedWorktree{
+				ID:     identity,
+				Status: "untracked by Forest state; adoption skipped because a healthy worktree already uses this branch",
+			})
+			continue
+		}
+		untracked = append(untracked, untrackedWorktree{
+			ID:     identity,
+			Status: "untracked by Forest state; adopting",
+		})
 		store.Worktrees = append(store.Worktrees, state.Worktree{
 			ID:        identity,
 			Name:      identity,
 			Branch:    branch,
-			Path:      rel,
+			Path:      filepath.Join(config.WorktreeDir, rel),
 			Base:      base,
 			CreatedAt: now,
 			CreatedBy: state.Actor{Kind: "doctor"},
@@ -1140,7 +1626,7 @@ func (a *App) reconcileGitWorktrees(ctx context.Context, root string, store *sta
 		_ = state.AppendEvent(root, state.Event{Time: now, Type: "adopted", ID: identity})
 		adopted++
 	}
-	return adopted, untracked, nil
+	return adopted, untracked
 }
 
 func validStatePath(path string) bool {
@@ -1149,7 +1635,7 @@ func validStatePath(path string) bool {
 	}
 	clean := filepath.Clean(path)
 	worktreeRoot := filepath.Clean(config.WorktreeDir)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		clean = strings.ToLower(clean)
 		worktreeRoot = strings.ToLower(worktreeRoot)
 	}

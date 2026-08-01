@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/pathutil"
 )
 
 func TestIntegrationClassifiesLiveBranchState(t *testing.T) {
@@ -208,6 +210,40 @@ func TestIntegrationKeepsConflictingChangesUnmerged(t *testing.T) {
 	if status != "unmerged" {
 		t.Fatalf("status = %q, want unmerged", status)
 	}
+}
+
+func TestWorktreesReportsPrunableRegistration(t *testing.T) {
+	root := initRepo(t)
+	path := filepath.Join(root, "missing")
+	runGit(t, root, "worktree", "add", "-b", "feature/prunable", path, "HEAD")
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+
+	worktrees, err := Worktrees(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPath, err := pathutil.NormalizePath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, worktree := range worktrees {
+		gotPath, err := pathutil.NormalizePath(worktree.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotPath == wantPath {
+			if !worktree.Prunable {
+				t.Fatal("expected missing worktree registration to be prunable")
+			}
+			if worktree.PrunableReason == "" {
+				t.Fatal("expected prunable reason")
+			}
+			return
+		}
+	}
+	t.Fatalf("missing worktree path %q not returned", path)
 }
 
 func TestIntegrationReportsUninspectableWorktree(t *testing.T) {

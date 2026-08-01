@@ -394,7 +394,7 @@ func TestListReportsUninspectableIntegration(t *testing.T) {
 	}
 }
 
-func TestCloseReportsInaccessibleWorktree(t *testing.T) {
+func TestCloseRemovesMissingWorktreeState(t *testing.T) {
 	root := initGitRepo(t)
 	runGit(t, root, "branch", "-M", "main")
 	t.Chdir(root)
@@ -412,11 +412,11 @@ func TestCloseReportsInaccessibleWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Closed) != 0 || len(result.Skipped) != 1 {
-		t.Fatalf("close result = %+v, want one inaccessible skipped worktree", result)
+	if len(result.Closed) != 1 || len(result.Skipped) != 0 {
+		t.Fatalf("close result = %+v, want stale worktree to close", result)
 	}
-	if !strings.HasPrefix(result.Skipped[0].Reason, "worktree inaccessible:") {
-		t.Fatalf("skip reason = %q, want inaccessible worktree diagnostic", result.Skipped[0].Reason)
+	if _, err := os.Stat(added.Path); !os.IsNotExist(err) {
+		t.Fatalf("stale worktree folder should be removed, stat err = %v", err)
 	}
 }
 
@@ -454,6 +454,13 @@ func TestStatusDiffRequiresName(t *testing.T) {
 	_, err := New().Status(context.Background(), StatusOptions{Diff: true})
 	if err == nil || !strings.Contains(err.Error(), "requires a worktree name") {
 		t.Fatalf("error = %v, want named diff requirement", err)
+	}
+}
+
+func TestStatusDiffRejectsFastMode(t *testing.T) {
+	_, err := New().Status(context.Background(), StatusOptions{Name: "feature", Diff: true, Fast: true})
+	if err == nil || !strings.Contains(err.Error(), "cannot be used with --fast") {
+		t.Fatalf("error = %v, want fast/diff incompatibility", err)
 	}
 }
 

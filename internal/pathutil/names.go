@@ -64,7 +64,7 @@ func ValidateIdentity(identity string) error {
 }
 
 func EqualFoldOnCaseInsensitiveFS(a, b string) bool {
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b

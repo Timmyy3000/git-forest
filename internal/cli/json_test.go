@@ -82,11 +82,29 @@ func TestListJSONMarksIntegrationOnlyChecks(t *testing.T) {
 	if worktree["integration"] == "" {
 		t.Fatal("expected live integration in default list JSON")
 	}
+	if worktree["lifecycle"] != "active" || worktree["registrationStatus"] != "registered" {
+		t.Fatalf("lifecycle contract = %+v, want active/registered", worktree)
+	}
 	if worktree["detailsSkipped"] != true {
 		t.Fatalf("detailsSkipped = %v, want true", worktree["detailsSkipped"])
 	}
 	if _, ok := worktree["checksSkipped"]; ok {
 		t.Fatalf("checksSkipped should be absent from integration-only list JSON: %+v", worktree)
+	}
+
+	fastOut, err := executeTestCommand("list", "--fast", "--json")
+	if err != nil {
+		t.Fatalf("fast list failed: %v\n%s", err, fastOut)
+	}
+	var fastDecoded struct {
+		Worktrees []map[string]any `json:"worktrees"`
+	}
+	if err := json.Unmarshal([]byte(fastOut), &fastDecoded); err != nil {
+		t.Fatal(err)
+	}
+	fastWorktree := fastDecoded.Worktrees[0]
+	if fastWorktree["lifecycle"] != "unverified" || fastWorktree["registrationStatus"] != "notChecked" {
+		t.Fatalf("fast lifecycle contract = %+v, want unverified/notChecked", fastWorktree)
 	}
 	if worktree["baseRef"] != "refs/heads/main" || worktree["comparisonSource"] != "local" {
 		t.Fatalf("comparison metadata = baseRef=%v source=%v, want refs/heads/main/local", worktree["baseRef"], worktree["comparisonSource"])

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +31,64 @@ func TestFromBranchUsesBranchAsIdentity(t *testing.T) {
 	}
 	if mapping.Branch != "feat/login-copy" {
 		t.Fatalf("branch = %q", mapping.Branch)
+	}
+}
+
+func TestNormalizePathCleansAndMakesAbsolute(t *testing.T) {
+	path, err := NormalizePath(filepath.Join(".", "forest", "..", "worktrees", "feature", "nested"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := NormalizePath(filepath.Join("worktrees", "feature", "nested"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != want {
+		t.Fatalf("normalized path = %q, want %q", path, want)
+	}
+}
+
+func TestNormalizePathFoldsCaseOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case folding applies to Windows paths")
+	}
+	path := filepath.Join(t.TempDir(), "Forest", "Worktree")
+	lower, err := NormalizePath(strings.ToLower(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper, err := NormalizePath(strings.ToUpper(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lower != upper {
+		t.Fatalf("case-normalized paths differ: %q != %q", lower, upper)
+	}
+}
+
+func TestNormalizePathPreservesDistinctCaseOnCaseSensitiveDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("case-sensitive volume behavior applies to Darwin paths")
+	}
+	root := t.TempDir()
+	upper := filepath.Join(root, "Foo")
+	lower := filepath.Join(root, "foo")
+	if err := os.MkdirAll(upper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(lower, 0o755); err != nil {
+		t.Skipf("filesystem is case-insensitive: %v", err)
+	}
+	first, err := NormalizePath(upper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NormalizePath(lower)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("distinct case-sensitive paths were conflated: %q", first)
 	}
 }
 
@@ -83,9 +142,9 @@ func TestContains(t *testing.T) {
 	}
 }
 
-func TestContainsFoldsCaseOnCaseInsensitivePlatforms(t *testing.T) {
-	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
-		t.Skip("case folding applies to windows and darwin only")
+func TestContainsFoldsCaseOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case folding applies to Windows paths")
 	}
 	root := t.TempDir()
 	parent := filepath.Join(root, "Fix-Login")

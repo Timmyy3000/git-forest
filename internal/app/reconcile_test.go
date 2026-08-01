@@ -1,0 +1,260 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Timmyy3000/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/git"
+	"github.com/Timmyy3000/git-forest/internal/state"
+)
+
+func TestClassifyWorktreeWithPrunableRegistrationAndGitMarkerIsInvalid(t *testing.T) {
+	lifecycle, registrationStatus, reason := classifyWorktree(worktreeEvidence{
+		PathExists:  true,
+		IsDirectory: true,
+		GitMarker:   true,
+		Registration: &git.WorktreeInfo{
+			Prunable: true,
+		},
+	}, nil)
+	if lifecycle != "invalid" || registrationStatus != "prunable" {
+		t.Fatalf("classification = %q/%q, want invalid/prunable", lifecycle, registrationStatus)
+	}
+	if reason != "Git worktree registration is prunable" {
+		t.Fatalf("reason = %q, want prunable registration diagnostic", reason)
+	}
+}
+
+func TestListClassifiesStaleAndFastUnverifiedWorktrees(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "stale")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/stale",
+		Name:   "feature/stale",
+		Branch: "feature/stale",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "stale"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	application := New()
+	listed, err := application.List(context.Background(), ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Worktrees) != 1 {
+		t.Fatalf("listed worktrees = %d, want 1", len(listed.Worktrees))
+	}
+	stale := listed.Worktrees[0]
+	if stale.Lifecycle != "stale" || stale.RegistrationStatus != "missing" {
+		t.Fatalf("stale view = %+v, want stale/missing", stale)
+	}
+	if !strings.Contains(stale.Reason, ".git marker is missing") {
+		t.Fatalf("stale reason = %q", stale.Reason)
+	}
+	if stale.ChecksIncomplete == false || stale.Integration != "unknown" {
+		t.Fatalf("stale checks = %+v, want incomplete unknown", stale)
+	}
+
+	fast, err := application.List(context.Background(), ListOptions{Fast: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fastView := fast.Worktrees[0]
+	if fastView.Lifecycle != "unverified" || fastView.RegistrationStatus != "notChecked" {
+		t.Fatalf("fast view = %+v, want unverified/notChecked", fastView)
+	}
+	if fastView.Reason != "Git worktree registration not checked (--fast)" {
+		t.Fatalf("fast reason = %q", fastView.Reason)
+	}
+}
+
+func TestDoctorFixPreservesNonEmptyStaleResidual(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "nonempty")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := filepath.Join(path, "user.txt")
+	if err := os.WriteFile(content, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/nonempty",
+		Name:   "feature/nonempty",
+		Branch: "feature/nonempty",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "nonempty"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Doctor(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheckPrefix(result, "worktree feature/nonempty residual cleanup", "skipped:") && !hasCheckPrefix(result, "worktree feature/nonempty residual cleanup", "failed:") {
+		t.Fatalf("expected non-empty residual to be preserved, got %#v", result.Checks)
+	}
+	if _, err := os.Stat(content); err != nil {
+		t.Fatalf("user content was removed: %v", err)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("feature/nonempty"); !ok {
+		t.Fatal("non-empty stale residual should remain in state for manual review")
+	}
+}
+
+func TestCloseSkipsNonEmptyStaleResidual(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "nonempty")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := filepath.Join(path, "user.txt")
+	if err := os.WriteFile(content, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/nonempty",
+		Name:   "feature/nonempty",
+		Branch: "feature/nonempty",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "nonempty"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Close(context.Background(), CloseOptions{Name: "feature/nonempty", Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("close result = %+v, want one skipped stale residual", result)
+	}
+	if !strings.Contains(result.Skipped[0].Reason, "not empty") {
+		t.Fatalf("skip reason = %q, want non-empty diagnostic", result.Skipped[0].Reason)
+	}
+	if _, err := os.Stat(content); err != nil {
+		t.Fatalf("user content was removed: %v", err)
+	}
+}
+
+func TestCloseRemovesStaleResidualAndGitRegistration(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "registered-stale")
+	runGit(t, root, "worktree", "add", "-b", "feature/registered-stale", path, "HEAD")
+	if err := os.Remove(filepath.Join(path, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/registered-stale",
+		Name:   "feature/registered-stale",
+		Branch: "feature/registered-stale",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "registered-stale"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Close(context.Background(), CloseOptions{Name: "feature/registered-stale", Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Closed) != 1 || result.Closed[0] != "feature/registered-stale" {
+		t.Fatalf("close result = %+v, want registered stale worktree closed", result)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale residual remains, stat error = %v", err)
+	}
+	if worktrees := runGitOutput(t, root, "worktree", "list", "--porcelain"); strings.Contains(worktrees, filepath.ToSlash(path)) {
+		t.Fatalf("stale Git registration remains:\n%s", worktrees)
+	}
+}
+
+func TestDoctorFixReportsStateSaveFailureAndReconcilesNextRun(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "save-failure")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/save-failure",
+		Name:   "feature/save-failure",
+		Branch: "feature/save-failure",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "save-failure"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	injected := errors.New("injected state save failure")
+	failing := &App{saveFn: func(string, state.Store) error { return injected }}
+	if _, err := failing.Doctor(context.Background(), true); !errors.Is(err, injected) {
+		t.Fatalf("doctor error = %v, want injected save failure", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("empty residual path should be removed before save failure, stat error = %v", err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("feature/save-failure"); !ok {
+		t.Fatal("failed save should leave the old record for next-run reconciliation")
+	}
+
+	if _, err := New().Doctor(context.Background(), true); err != nil {
+		t.Fatalf("next doctor --fix failed: %v", err)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("feature/save-failure"); ok {
+		t.Fatal("next doctor --fix should remove the already-missing stale record")
+	}
+}

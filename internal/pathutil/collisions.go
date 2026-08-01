@@ -35,7 +35,7 @@ func Contains(parent, child string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		parent = strings.ToLower(parent)
 		child = strings.ToLower(child)
 	}
@@ -48,7 +48,7 @@ func Contains(parent, child string) (bool, error) {
 
 // CanonicalPath returns an absolute, symlink-resolved path for comparisons.
 func CanonicalPath(path string) (string, error) {
-	cleaned, err := filepath.Abs(filepath.Clean(path))
+	cleaned, err := NormalizePath(path)
 	if err != nil {
 		return "", err
 	}
@@ -59,9 +59,47 @@ func CanonicalPath(path string) (string, error) {
 	return filepath.Clean(evaluated), nil
 }
 
+// NormalizePath returns an absolute, cleaned path with existing symlink
+// prefixes resolved. Missing suffixes are preserved for comparisons of paths
+// reported by Git with state paths that may not exist anymore.
+func NormalizePath(path string) (string, error) {
+	cleaned, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	cleaned, err = resolveExistingPrefix(cleaned)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		cleaned = strings.ToLower(cleaned)
+	}
+	return filepath.Clean(cleaned), nil
+}
+
+func resolveExistingPrefix(path string) (string, error) {
+	current := path
+	var suffix []string
+	for {
+		if evaluated, err := filepath.EvalSymlinks(current); err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				evaluated = filepath.Join(evaluated, suffix[i])
+			}
+			return filepath.Clean(evaluated), nil
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("resolve path %q: no existing ancestor", path)
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
+}
+
 func collisionKey(path string) string {
 	path = filepath.Clean(path)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		return strings.ToLower(path)
 	}
 	return path

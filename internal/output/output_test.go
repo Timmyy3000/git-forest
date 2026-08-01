@@ -44,6 +44,23 @@ func TestRenderStatusMarksFailedIntegrationAsPartial(t *testing.T) {
 	}
 }
 
+func TestRenderStatusShowsUnverifiedFastMode(t *testing.T) {
+	var out bytes.Buffer
+	err := RenderStatus(&out, app.ListResult{Worktrees: []app.WorktreeView{{
+		Name:               "fast",
+		Integration:        "unknown",
+		Lifecycle:          "unverified",
+		RegistrationStatus: "notChecked",
+		Reason:             "Git worktree registration not checked (--fast)",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "unverified") || !strings.Contains(out.String(), "not checked") {
+		t.Fatalf("rendered fast status missing unverified diagnostic:\n%s", out.String())
+	}
+}
+
 func TestRenderRecursiveListUsesCompactRepositoryGroups(t *testing.T) {
 	var out bytes.Buffer
 	err := renderRecursiveList(&out, app.RecursiveListResult{Repositories: []app.RepositoryList{

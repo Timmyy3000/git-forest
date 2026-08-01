@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Timmyy3000/git-forest/internal/config"
+	"github.com/Timmyy3000/git-forest/internal/git"
 	"github.com/Timmyy3000/git-forest/internal/pathutil"
 	"github.com/Timmyy3000/git-forest/internal/state"
 )
@@ -71,7 +72,7 @@ func TestDoctorFixAdoptsGitWorktreeMissingFromState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasCheck(result, "worktree feature/orphan", "untracked by Forest state") {
+	if !hasCheckPrefix(result, "worktree feature/orphan", "untracked by Forest state") {
 		t.Fatalf("expected untracked worktree check, got %#v", result.Checks)
 	}
 
@@ -95,6 +96,30 @@ func TestDoctorFixAdoptsGitWorktreeMissingFromState(t *testing.T) {
 	}
 }
 
+func TestReconcileReportsUntrackedUnhealthyGitWorktree(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "unhealthy")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a worktree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := git.WorktreeInfo{Path: path, Branch: "feature/unhealthy"}
+	registry := gitWorktreeRegistry{
+		Entries: []git.WorktreeInfo{entry},
+		ByPath:  map[string]git.WorktreeInfo{worktreePathKey(path): entry},
+	}
+	store := state.NewStore(root)
+	_, untracked := New().reconcileGitWorktreesWithRegistry(context.Background(), root, &store, registry, false)
+	if len(untracked) != 1 || untracked[0].ID != "feature/unhealthy" || !strings.Contains(untracked[0].Status, "path is not a directory") {
+		t.Fatalf("untracked = %#v, want unhealthy Forest-scoped registration", untracked)
+	}
+}
+
 func TestDoctorFixMarksExistingCreatingWorktreeActive(t *testing.T) {
 	root := initGitRepo(t)
 	if err := config.Ensure(root); err != nil {
@@ -115,6 +140,14 @@ func TestDoctorFixMarksExistingCreatingWorktreeActive(t *testing.T) {
 	runGit(t, root, "worktree", "add", "-b", "feature/creating", worktreePath, "HEAD")
 	t.Chdir(root)
 
+	diagnostic, err := New().Doctor(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheck(diagnostic, "worktree feature/creating status cleanup", "would mark active") {
+		t.Fatalf("expected diagnostic-only creating cleanup check, got %#v", diagnostic.Checks)
+	}
+
 	result, err := New().Doctor(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +165,216 @@ func TestDoctorFixMarksExistingCreatingWorktreeActive(t *testing.T) {
 	}
 	if wt.Status.LastKnown != "active" {
 		t.Fatalf("status = %q, want active", wt.Status.LastKnown)
+	}
+}
+
+func TestDoctorReconcilesStaleResidualAndStatusDoesNotInspectParent(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	residualPath := filepath.Join(root, config.WorktreeDir, "ft", "stale-residual")
+	if err := os.MkdirAll(residualPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "ft/stale-residual",
+		Name:   "ft/stale-residual",
+		Branch: "ft/stale-residual",
+		Path:   filepath.Join(config.WorktreeDir, "ft", "stale-residual"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	doctor, err := New().Doctor(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheckPrefix(doctor, "worktree ft/stale-residual", "stale residual:") {
+		t.Fatalf("expected stale residual diagnostic, got %#v", doctor.Checks)
+	}
+	status, err := New().Status(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := status.Worktrees[0]
+	if view.Integration != "unknown" || view.Dirty || !view.ChecksIncomplete {
+		t.Fatalf("invalid worktree status = %+v, want unknown and incomplete without parent-repo dirty state", view)
+	}
+	if !strings.Contains(view.CheckError, ".git marker is missing") {
+		t.Fatalf("status error = %q, want missing marker diagnostic", view.CheckError)
+	}
+
+	doctor, err = New().Doctor(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheck(doctor, "worktree ft/stale-residual residual cleanup", "removed") {
+		t.Fatalf("expected residual cleanup, got %#v", doctor.Checks)
+	}
+	if _, err := os.Stat(residualPath); !os.IsNotExist(err) {
+		t.Fatalf("residual folder still exists, stat err = %v", err)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("ft/stale-residual"); ok {
+		t.Fatal("stale residual should be removed from Forest state")
+	}
+
+	second, err := New().Doctor(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCheckPrefix(second, "worktree ft/stale-residual residual cleanup", "") || hasCheckPrefix(second, "state path cleanup", "") {
+		t.Fatalf("second doctor --fix made additional stale cleanup changes: %#v", second.Checks)
+	}
+}
+
+func TestDoctorFixRemovesStaleStateAndPrunableGitMetadata(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "prunable")
+	runGit(t, root, "worktree", "add", "-b", "feature/prunable", path, "HEAD")
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/prunable",
+		Name:   "feature/prunable",
+		Branch: "feature/prunable",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "prunable"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	doctor, err := New().Doctor(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheckPrefix(doctor, "worktree feature/prunable", "stale state:") {
+		t.Fatalf("expected stale state diagnostic, got %#v", doctor.Checks)
+	}
+	if !hasCheckPrefix(doctor, "git worktree feature/prunable", "prunable Git metadata:") {
+		t.Fatalf("expected prunable metadata diagnostic, got %#v", doctor.Checks)
+	}
+
+	if _, err := New().Doctor(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("feature/prunable"); ok {
+		t.Fatal("stale state should be removed")
+	}
+	worktrees := runGitOutput(t, root, "worktree", "list", "--porcelain")
+	if strings.Contains(worktrees, filepath.ToSlash(path)) {
+		t.Fatalf("prunable Git metadata remains:\n%s", worktrees)
+	}
+}
+
+func TestDoctorFixAdoptsGitWorktreeWhenStaleStateHasSameBranch(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, config.WorktreeDir, "feature", "adopted")
+	runGit(t, root, "worktree", "add", "-b", "feature/adopted", path, "HEAD")
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:     "feature/adopted",
+		Name:   "feature/adopted",
+		Branch: "feature/adopted",
+		Path:   filepath.Join(config.WorktreeDir, "feature", "missing-adopted"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	result, err := New().Doctor(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasCheckPrefix(result, "worktree adoption", "adopted 1") {
+		t.Fatalf("expected one-pass adoption, got %#v", result.Checks)
+	}
+	store, err = state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Worktrees) != 1 || store.Worktrees[0].Path != filepath.Join(config.WorktreeDir, "feature", "adopted") {
+		t.Fatalf("state after reconciliation = %#v, want only adopted worktree", store.Worktrees)
+	}
+}
+
+func TestDoctorFixNeverRemovesPathOutsideForestWorktrees(t *testing.T) {
+	root := initGitRepo(t)
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside-residual")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewStore(root)
+	store.Worktrees = append(store.Worktrees, state.Worktree{
+		ID:   "unsafe",
+		Name: "unsafe",
+		Path: filepath.Join(config.WorktreeDir, "..", "..", "outside-residual"),
+	})
+	if err := state.Save(root, store); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	if _, err := New().Doctor(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("doctor removed or changed outside path: %v", err)
+	}
+	store, err := state.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := store.Find("unsafe"); !ok {
+		t.Fatal("unsafe state record should remain for manual review")
+	}
+}
+
+func TestDoctorFixLeavesValidDirtyWorktreeUntouched(t *testing.T) {
+	root := initGitRepo(t)
+	runGit(t, root, "branch", "-M", "main")
+	if err := config.Ensure(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	added, err := New().Add(context.Background(), AddOptions{Name: "dirty"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(added.Path, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New().Doctor(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(added.Path, ".git")); err != nil {
+		t.Fatalf("valid worktree marker changed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(added.Path, "dirty.txt")); err != nil {
+		t.Fatalf("valid dirty worktree changed: %v", err)
 	}
 }
 

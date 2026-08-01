@@ -114,6 +114,20 @@ If Forest cannot inspect a worktree's integration state, `forest close` refuses 
 
 Never delete `.forest/worktrees/*` directories or run `git worktree remove` manually. Always go through `forest close`.
 
+## Repairing Stale Worktrees
+
+When a worktree is listed in Forest state but its folder, `.git` marker, or Git registration is missing, inspect all three sources of truth before taking action:
+
+```bash
+forest status --json
+forest doctor --json
+git worktree list --porcelain
+```
+
+`forest doctor` reports healthy worktrees, stale residual folders, stale state records, prunable Git metadata, and valid Forest worktrees that are missing from Forest state. Use `forest doctor --fix --json` when repair is authorized. It removes stale records, cleans verified residual directories only inside `.forest/worktrees`, prunes obsolete Forest-scoped Git metadata, and adopts valid untracked Forest worktrees. The operation is safe to rerun.
+
+Invalid worktrees are reported as incomplete by `forest status`; do not infer their dirty or integration state from the parent repository. Valid dirty worktrees remain untouched, and paths outside `.forest/worktrees` are preserved.
+
 ## Lock And Repair Rules
 
 - If a command reports that Forest state is locked, wait briefly and retry once.
