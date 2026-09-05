@@ -1085,7 +1085,12 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			return err
 		}
 		registry := loadGitWorktreeRegistry(ctx, root)
+		if registry.LoadErr != nil {
+			return fmt.Errorf("cannot inspect Git worktree registrations: %w", registry.LoadErr)
+		}
 		var kept []state.Worktree
+		var completed []state.Worktree
+		deleteBranches := make(map[string]bool)
 		comparisons := make(map[string]comparisonResult, len(store.Worktrees))
 		matched := false
 		for _, wt := range store.Worktrees {
@@ -1105,14 +1110,30 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 				continue
 			}
 			abs := filepath.Join(root, wt.Path)
+			info, inspectErr := os.Lstat(abs)
+			if inspectErr != nil && !os.IsNotExist(inspectErr) {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + inspectErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
+			if info != nil && !info.IsDir() {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree: worktree path is not a directory (or is a symbolic link)"})
+				kept = append(kept, wt)
+				continue
+			}
+			if _, markerErr := os.Lstat(filepath.Join(abs, ".git")); markerErr != nil && !os.IsNotExist(markerErr) {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "cannot inspect .git marker: " + markerErr.Error()})
+				kept = append(kept, wt)
+				continue
+			}
 			evidence := inspectWorktree(abs, registry)
-			if registry.LoadErr != nil || !evidence.healthy() {
+			if !evidence.healthy() {
 				if evidence.GitMarker {
 					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree: " + invalidWorktreeReason(evidence, registry.LoadErr)})
 					kept = append(kept, wt)
 					continue
 				}
-				if !evidence.staleResidual() && (evidence.PathExists || evidence.Registration == nil) {
+				if !evidence.staleResidual() && evidence.PathExists {
 					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "invalid worktree: " + invalidWorktreeReason(evidence, registry.LoadErr)})
 					kept = append(kept, wt)
 					continue
@@ -1122,17 +1143,10 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 					kept = append(kept, wt)
 					continue
 				}
-				if evidence.staleResidual() {
-					if err := safeResidualPath(root, abs); err != nil {
-						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
-						kept = append(kept, wt)
-						continue
-					}
-					if err := ensureEmptyResidualDirectory(abs); err != nil {
-						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale residual: " + err.Error()})
-						kept = append(kept, wt)
-						continue
-					}
+				if err := safeResidualPath(root, abs); err != nil {
+					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale record: " + err.Error()})
+					kept = append(kept, wt)
+					continue
 				}
 				// A stale residual has no .git marker, so Git may refuse to remove
 				// its prunable registration while the empty directory still exists.
@@ -1145,28 +1159,27 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 						continue
 					}
 				}
+				var removeErr error
 				if evidence.Registration != nil {
 					if err := safeResidualPath(root, evidence.Registration.Path); err != nil {
 						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale Git registration: " + err.Error()})
 						kept = append(kept, wt)
 						continue
 					}
-					if err := git.WorktreeRemove(ctx, root, evidence.Registration.Path, true); err != nil {
-						result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "remove stale Git registration: " + err.Error()})
-						kept = append(kept, wt)
-						continue
-					}
+					removeErr = git.WorktreeRemove(ctx, root, evidence.Registration.Path, true)
 				}
-				if opts.DeleteBranch {
-					_ = git.DeleteBranch(ctx, root, wt.Branch)
+				if err := verifyWorktreeRemoval(ctx, root, abs); err != nil {
+					result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: closeFailureReason(err, removeErr)})
+					kept = append(kept, wt)
+					continue
 				}
-				result.Closed = append(result.Closed, wt.Name)
-				_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
-				continue
-			}
-			if _, statErr := os.Stat(abs); statErr != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: "worktree inaccessible: " + statErr.Error()})
-				kept = append(kept, wt)
+				if removeErr != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: removal verified despite Git error: %v", wt.Name, removeErr))
+				}
+				if opts.DeleteBranch && wt.Branch != "" {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: stale recovery retained branch %q; integration was not checked", wt.Name, wt.Branch))
+				}
+				completed = append(completed, wt)
 				continue
 			}
 			inside, pathErr := pathutil.Contains(filepath.Join(root, config.WorktreeDir), abs)
@@ -1251,26 +1264,78 @@ func (a *App) Close(ctx context.Context, opts CloseOptions) (CloseResult, error)
 			if opts.Merged && opts.IncludeUnmerged && integrated == "unmerged" {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: closing unmerged worktree because --include-unmerged was specified", wt.Name))
 			}
-			if err := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty); err != nil {
-				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: err.Error()})
+			removeErr := git.WorktreeRemove(ctx, root, abs, dirty && opts.IncludeDirty)
+			if err := verifyWorktreeRemoval(ctx, root, abs); err != nil {
+				result.Skipped = append(result.Skipped, Skipped{Name: wt.Name, Reason: closeFailureReason(err, removeErr)})
 				kept = append(kept, wt)
 				continue
 			}
-			if opts.DeleteBranch && wt.Branch != "" {
-				if err := git.DeleteBranch(ctx, root, wt.Branch); err != nil {
-					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: branch %q was not deleted: %v", wt.Name, wt.Branch, err))
-				}
+			if removeErr != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: removal verified despite Git error: %v", wt.Name, removeErr))
 			}
-			result.Closed = append(result.Closed, wt.Name)
-			_ = state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID})
+			completed = append(completed, wt)
+			deleteBranches[wt.ID] = opts.DeleteBranch && wt.Branch != ""
 		}
 		if opts.Name != "" && !matched {
 			return fmt.Errorf("worktree %q not found in Forest state (run 'forest doctor' to check for git worktrees Forest is not tracking)", opts.Name)
 		}
 		store.Worktrees = kept
-		return a.saveStore(root, store)
+		if err := a.saveStore(root, store); err != nil {
+			if len(completed) > 0 {
+				return fmt.Errorf("save close state after worktree removal (branches retained; retry close): %w", err)
+			}
+			return err
+		}
+		for _, wt := range completed {
+			if deleteBranches[wt.ID] {
+				if err := git.DeleteBranch(ctx, root, wt.Branch); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("%s: branch %q was not deleted: %v", wt.Name, wt.Branch, err))
+				}
+			}
+			result.Closed = append(result.Closed, wt.Name)
+			if err := state.AppendEvent(root, state.Event{Time: time.Now().UTC(), Type: "closed", ID: wt.ID}); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("%s: closed, but could not append event: %v", wt.Name, err))
+			}
+		}
+		return nil
 	})
 	return result, err
+}
+
+// Git can unregister a worktree even when deleting its directory fails. Never
+// infer either postcondition from its exit code or the pre-removal registry.
+func verifyWorktreeRemoval(ctx context.Context, root, path string) error {
+	registry := loadGitWorktreeRegistry(ctx, root)
+	var problems []string
+	_, registered := registry.ByPath[worktreePathKey(path)]
+	if registry.LoadErr != nil {
+		problems = append(problems, "Git registration unknown: "+registry.LoadErr.Error())
+	} else if registered {
+		problems = append(problems, "Git registration still exists")
+	}
+	_, pathErr := os.Lstat(path)
+	if pathErr == nil {
+		problems = append(problems, "worktree path still exists; preserve residual contents before retrying close")
+	} else if !os.IsNotExist(pathErr) {
+		problems = append(problems, "worktree path unknown: "+pathErr.Error())
+	}
+	if len(problems) > 0 {
+		if registry.LoadErr == nil && !registered {
+			problems = append(problems, "Git registration absent")
+		}
+		if os.IsNotExist(pathErr) {
+			problems = append(problems, "worktree path absent")
+		}
+		return fmt.Errorf("close incomplete: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func closeFailureReason(verificationErr, removeErr error) string {
+	if removeErr != nil {
+		return verificationErr.Error() + "; " + removeErr.Error()
+	}
+	return verificationErr.Error()
 }
 
 func isMergedIntegration(integration string) bool {
