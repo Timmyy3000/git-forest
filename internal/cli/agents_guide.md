@@ -114,6 +114,10 @@ If Forest cannot inspect a worktree's integration state, `forest close` refuses 
 
 Never delete `.forest/worktrees/*` directories or run `git worktree remove` manually. Always go through `forest close`.
 
+Read `closed`, `skipped`, and `warnings`; exit status alone does not prove cleanup. Close verifies Git registration and disk removal and saves Forest state before deleting a requested branch or recording a closed event. Verify completion with `forest list --json`, `git worktree list --porcelain`, and the exact original filesystem path. An inaccessible path is not proof of absence.
+
+If Git removes registration but leaves files, close reports the incomplete result and preserves the Forest record and branch. Preserve needed residual contents before retrying. `forest close <name> --yes` can reconcile an already-missing directory or remove a verified empty residual; it never recursively deletes residual content. Stale recovery retains the branch even with `--delete-branch`. A failed state save also leaves the branch available for a safe retry; event-write failures after a successful save are warnings.
+
 ## Repairing Stale Worktrees
 
 When a worktree is listed in Forest state but its folder, `.git` marker, or Git registration is missing, inspect all three sources of truth before taking action:

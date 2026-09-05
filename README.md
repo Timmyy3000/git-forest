@@ -69,6 +69,15 @@ curl -fsSL https://forest.timi.click/install.sh | FOREST_VERSION=v0.2.0 sh
 
 The installer downloads the matching GitHub release asset for your OS and architecture, verifies `checksums.txt` when `sha256sum` or `shasum` is available, and installs `forest` into `/usr/local/bin` or `~/.local/bin`. Set `FOREST_INSTALL_DIR` to choose a different directory.
 
+On Windows, download `forest_windows_amd64.zip` (or `forest_windows_arm64.zip` for ARM64) and `checksums.txt` from the same [official release](https://github.com/Timmyy3000/git-forest/releases/latest). Before extracting, compare the archive's SHA-256 with its entry in `checksums.txt`:
+
+```powershell
+Get-FileHash .\forest_windows_amd64.zip -Algorithm SHA256
+Get-Command forest -All
+```
+
+For an upgrade, back up the executable resolved by `Get-Command`, then replace that executable with the verified archive's `forest.exe`. For a new install, put it in a directory on PATH. Keep repository configuration and worktrees in place. Run `forest version --json` and `Get-Command forest -All` afterward to confirm the release and check for older copies shadowing it. Building a repository checkout does not update a separately installed executable.
+
 From source:
 
 ```bash
@@ -154,6 +163,10 @@ Close worktrees after merge:
 ```bash
 forest close --merged --yes
 ```
+
+Close verifies both Git registration and physical path removal before saving the updated Forest state. Branch deletion and closed events follow a successful state save. Inspect `closed`, `skipped`, and `warnings` in JSON output; a successful command exit does not mean every selected worktree closed.
+
+Git can unregister a worktree but leave files behind, for example when a Windows file handle prevents deletion. Close reports both surfaces and retains the Forest record and branch when removal is incomplete or cannot be verified. Nonempty residual directories are preserved. After preserving any needed residual contents, retry `forest close <name> --yes`: it can reconcile an already-missing path or remove a verified empty residual. Stale recovery always retains the branch, including with `--delete-branch`, because it does not check integration. Confirm the final result with `forest list --json`, `git worktree list --porcelain`, and an inspection of the exact original directory path.
 
 ## Commands
 
