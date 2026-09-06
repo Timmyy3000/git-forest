@@ -4,6 +4,10 @@ All notable changes to Forest will be documented here.
 
 ## Unreleased
 
+- Verify Git registration and disk removal after close, including failed Git removals, and report incomplete cleanup while preserving residual content and branch refs.
+- Allow confirmed missing-worktree close retries, retain branches during stale recovery, and save Forest state before branch deletion and closed events.
+- Document partial-close recovery and Windows release upgrades.
+
 ## v0.8.0 - 2026-08-01
 
 - Hardened comparison and merge-tree checks by pinning remote base commits, selecting worktree heads deliberately, and surfacing lookup or cancellation failures.
