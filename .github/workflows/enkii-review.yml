@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run enkii
-        uses: Timmyy3000/enkii@v0.2
+        uses: Timmyy3000/enkii@v1
         with:
           openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
           review_skill_path: .enkii/review.md
